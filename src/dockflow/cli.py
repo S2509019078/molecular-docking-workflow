@@ -3,15 +3,21 @@ import argparse
 
 from .config import WorkflowConfig
 from .pipeline import DockingWorkflow
+from .wizard import interactive_wizard
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="dockflow", description="可复用 AutoDock/Vina 分子对接流程")
-    parser.add_argument("command", choices=["check", "pockets", "prepare-receptors", "prepare-ligands", "dock", "summarize", "plip", "all", "status"])
+    parser.add_argument("command", choices=["wizard", "check", "pockets", "prepare-receptors", "prepare-ligands", "dock", "summarize", "plip", "all", "status"])
     parser.add_argument("--config", type=Path, default=Path("config/config.yaml"))
+    parser.add_argument("--runs-dir", type=Path, default=Path("runs"), help="wizard 创建独立运行目录的位置")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--with-plip", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.command == "wizard":
+        interactive_wizard(base_dir=args.runs_dir)
+        return 0
 
     config = WorkflowConfig.from_yaml(args.config)
     workflow = DockingWorkflow(config)
