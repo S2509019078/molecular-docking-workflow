@@ -2,6 +2,24 @@
 
 DockFlow 将受体获取、口袋定义、AutoDockTools PDBQT 预处理、Open Babel 配体格式转换、AutoDock Vina 批量对接、结果汇总和可选 PLIP 分析串联成可断点续跑的工作流。以后开展新项目时，只需提供受体信息、配体文件和口袋依据，不需要重新拼接脚本。
 
+## Windows `.exe` 预览版
+
+仓库现在可以通过 GitHub Actions 自动构建 `DockFlow.exe`。双击运行时会直接进入交互式项目向导，并默认把独立项目创建在：
+
+```text
+Documents\DockFlow\runs\
+```
+
+也可以在命令行中继续使用完整参数，例如：
+
+```powershell
+DockFlow.exe --help
+DockFlow.exe check --config path\to\config.yaml
+DockFlow.exe all --config path\to\config.yaml
+```
+
+当前 `.exe` 负责项目创建、输入检查、路径解析、任务调度、日志和结果整理。AutoDock Vina、Open Babel、MGLTools/AutoDockTools 仍是外部依赖，不会被打进单文件程序。GitHub Actions 会在 Windows runner 上构建并执行 `--help` 冒烟测试，然后上传 `DockFlow-Windows-x64` 构建产物。
+
 ## 推荐：交互式新建项目
 
 运行：
@@ -101,4 +119,4 @@ python -m compileall src tests
 pytest -q
 ```
 
-测试覆盖配置解析、交互式项目生成、共晶配体检测、无原配体口袋策略、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。
+测试覆盖配置解析、交互式项目生成、Windows 启动器、共晶配体检测、无原配体口袋策略、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行，同时使用 Windows runner 构建并冒烟测试 `.exe`。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。
