@@ -62,7 +62,7 @@ dockflow plip --config config/config.yaml
 
 ## 输出与解释
 
-`results/docking_summary.tsv` 包含最佳结合能、构象中心到参考配体中心的距离、证据等级和分类。只有共晶口袋、结合能达标且参考距离达标的结果才标为 `high_confidence`。显式盒子和残基盒子保留为 `manual_review`；盲对接标为 `exploratory`。这避免把无共晶依据的结果误写成已验证结合模式。
+`results/docking_summary.tsv` 包含最佳结合能、最佳 Vina 构象中心到参考配体中心的距离、证据等级和分类。共晶口袋、结合能达标且参考距离达标的结果标为 `reference_consistent`，表示与参考口袋位置一致，不代表已经通过实验验证。显式盒子和残基盒子保留为 `manual_review`；盲对接标为 `exploratory`。
 
 ## 测试
 
@@ -71,4 +71,4 @@ python -m compileall src tests
 pytest -q
 ```
 
-测试包含配置解析、共晶配体实例选择、无原配体口袋策略、受体清理、Vina结果解析和使用假外部工具的端到端烟测。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行。
+测试覆盖配置解析、共晶配体实例选择、无原配体口袋策略、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。
