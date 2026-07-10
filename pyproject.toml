@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dockflow"
-version = "0.1.0"
-description = "Reusable Linux-first molecular docking workflow"
+version = "1.0.0"
+description = "Reusable AutoDockTools and AutoDock Vina batch docking workflow"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
 
@@ -15,7 +15,9 @@ test = ["pytest>=8.0"]
 [project.scripts]
 dockflow = "dockflow.cli:main"
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-

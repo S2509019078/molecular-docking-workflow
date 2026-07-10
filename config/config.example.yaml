@@ -1,10 +1,22 @@
 tools:
-  pymol: null
+  mgltools_pythonsh: /path/to/MGLTools/bin/pythonsh
+  prepare_receptor4: /path/to/MGLTools/MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py
+  prepare_ligand4: /path/to/MGLTools/MGLToolsPckgs/AutoDockTools/Utilities24/prepare_ligand4.py
   obabel: obabel
   vina: vina
   plip: plip
+
+paths:
+  targets: config/targets.tsv
+  ligands: inputs/ligands
+  work: work
+  results: results
+
 settings:
+  box_padding_angstrom: 4.0
+  exhaustiveness: 8
+  num_modes: 9
+  energy_range: 3
+  cpu: 1
   energy_threshold: -8.0
   distance_threshold_angstrom: 5.0
-  box_padding_angstrom: 4.0
-
