@@ -43,35 +43,18 @@ def load_targets(path: Path) -> list[Target]:
         if not name or name in seen:
             raise ValueError(f"duplicate or empty target name: {name!r}")
         seen.add(name)
-
         strategy = (row.get("pocket_strategy") or "").strip().lower()
         if strategy not in SUPPORTED_POCKET_STRATEGIES:
             raise ValueError(f"unsupported pocket strategy for {name}: {strategy!r}")
-
         center_values = tuple(_optional_float(row, f"center_{axis}") for axis in "xyz")
         center = None if any(value is None for value in center_values) else center_values
         size_values = tuple(_optional_float(row, f"size_{axis}") for axis in "xyz")
         size = None if any(value is None for value in size_values) else size_values
-
         legacy_chain = (row.get("chain") or "").strip()
         receptor_chains = _split_csv(row.get("receptor_chains")) or ((legacy_chain,) if legacy_chain else ())
         ligand_chain = (row.get("ligand_chain") or "").strip() or legacy_chain
         residue_ids = tuple(int(value) for value in _split_csv(row.get("residue_ids")))
-
-        target = Target(
-            name=name,
-            structure_source=(row.get("structure_source") or "").strip().lower(),
-            structure=(row.get("structure") or "").strip(),
-            pocket_strategy=strategy,
-            receptor_chains=receptor_chains,
-            ligand=(row.get("ligand") or "").strip().upper() or None,
-            ligand_chain=ligand_chain,
-            ligand_residue_id=_optional_int(row, "ligand_residue_id"),
-            center=center,
-            size=size,
-            residue_ids=residue_ids,
-            keep_hetero_resnames=tuple(value.upper() for value in _split_csv(row.get("keep_hetero_resnames"))),
-        )
+        target = Target(name=name, structure_source=(row.get("structure_source") or "").strip().lower(), structure=(row.get("structure") or "").strip(), pocket_strategy=strategy, receptor_chains=receptor_chains, ligand=(row.get("ligand") or "").strip().upper() or None, ligand_chain=ligand_chain, ligand_residue_id=_optional_int(row, "ligand_residue_id"), center=center, size=size, residue_ids=residue_ids, keep_hetero_resnames=tuple(value.upper() for value in _split_csv(row.get("keep_hetero_resnames"))), ligands=_split_csv(row.get("ligands")))
         validate_target(target)
         result.append(target)
     return result
