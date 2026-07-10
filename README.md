@@ -1,27 +1,16 @@
 # DockFlow：AutoDock/Vina 批量分子对接流程
 
-DockFlow 将受体获取、共晶口袋定义、AutoDockTools PDBQT 预处理、Open Babel 配体格式转换、AutoDock Vina 批量对接、结果汇总和可选 PLIP 分析串联为可断点续跑的命令行流程。仓库不包含 MGLTools、AutoDock Vina、Open Babel、PLIP 或任何第三方软件本体。
+DockFlow 将受体获取、口袋定义、AutoDockTools PDBQT 预处理、Open Babel 配体格式转换、AutoDock Vina 批量对接、结果汇总和可选 PLIP 分析串联成可断点续跑的工作流。以后开展新项目时，只需提供受体信息、配体文件和口袋依据，不需要重新拼接脚本。
 
-## 适用范围
+## 常见输入情况
 
-- 多受体 × 多配体的批量小分子对接；
-- 受体来自 RCSB PDB 或本地 PDB；
-- 优先使用共晶配体定义口袋；
-- 没有共晶配体时，可使用显式盒子、已知残基盒子或盲对接；
-- 受体和配体最终均通过 AutoDockTools 生成 PDBQT；
-- SDF、MOL2、MOL、PDB、SMILES 等配体格式先由 Open Babel 转成 PDB，再交给 `prepare_ligand4.py`。
+受体可以直接填写 RCSB PDB ID，也可以使用本地 PDB。口袋支持四种情况：存在共晶配体时用 `co_crystal`；没有原配体但知道口袋坐标时用 `explicit_box`；知道关键残基时用 `residue_box`；没有可靠口袋信息时用 `blind`，但结果会明确标记为探索性。对含金属或必要辅因子的受体，可在 `keep_hetero_resnames` 中指定保留。
 
-## 环境要求
+配体目录支持 PDB、SDF、MOL2、MOL、SMI、SMILES 和 PDBQT。除已经是 PDBQT 的配体外，其余格式先由 Open Babel 转成 PDB，再由 AutoDockTools `prepare_ligand4.py` 生成 PDBQT。受体由 `prepare_receptor4.py` 生成 PDBQT。
 
-需要自行安装并配置：
+## 安装
 
-- Python 3.10+
-- MGLTools / AutoDockTools：`pythonsh`、`prepare_receptor4.py`、`prepare_ligand4.py`
-- Open Babel
-- AutoDock Vina
-- PLIP（可选）
-
-## 快速开始
+自行安装 Python 3.10+、MGLTools/AutoDockTools、Open Babel、AutoDock Vina；PLIP 为可选。仓库不包含第三方软件本体、许可证、密码或 Token。
 
 ```bash
 python -m venv .venv
@@ -32,60 +21,48 @@ cp config/targets.example.tsv config/targets.tsv
 mkdir -p inputs/ligands
 ```
 
-修改 `config/config.yaml` 中的软件路径，将配体放入 `inputs/ligands/`，再修改 `config/targets.tsv`。
+在 `config/config.yaml` 填写软件路径，把配体放入 `inputs/ligands/`，再编辑 `config/targets.tsv`。
+
+## 运行
 
 ```bash
-python -m dockflow.cli check --config config/config.yaml
-python -m dockflow.cli all --config config/config.yaml
+dockflow check --config config/config.yaml
+dockflow all --config config/config.yaml
 ```
 
-需要同时运行 PLIP：
+同时执行 PLIP：
 
 ```bash
-python -m dockflow.cli all --config config/config.yaml --with-plip
+dockflow all --config config/config.yaml --with-plip
 ```
 
-## 分阶段运行
+也可分阶段运行：
 
 ```bash
-python -m dockflow.cli pockets --config config/config.yaml
-python -m dockflow.cli prepare-receptors --config config/config.yaml
-python -m dockflow.cli prepare-ligands --config config/config.yaml
-python -m dockflow.cli dock --config config/config.yaml
-python -m dockflow.cli summarize --config config/config.yaml
-python -m dockflow.cli plip --config config/config.yaml
-python -m dockflow.cli status --config config/config.yaml
+dockflow pockets --config config/config.yaml
+dockflow prepare-receptors --config config/config.yaml
+dockflow prepare-ligands --config config/config.yaml
+dockflow dock --config config/config.yaml
+dockflow summarize --config config/config.yaml
+dockflow plip --config config/config.yaml
 ```
 
-加 `--force` 可覆盖已有中间结果。
+`--force` 会覆盖已有中间结果。默认采用全部受体×全部配体；某个受体只对接指定配体时，在 `targets.tsv` 的 `ligands` 列填写逗号分隔的配体文件名（不含扩展名）。
 
-## 口袋策略
+## targets.tsv 关键字段
 
-`co_crystal`：从当前 PDB 的指定 `HETATM` 配体定义盒子。推荐同时填写 `chain`、`ligand` 和 `ligand_residue_id`，避免同一结构中存在多个同名配体时混合计算。
+- `structure_source`：`pdb` 或 `local`。
+- `structure`：PDB ID 或相对项目根目录的本地 PDB 路径。
+- `pocket_strategy`：`co_crystal`、`explicit_box`、`residue_box` 或 `blind`。
+- `receptor_chains`：保留的蛋白链，可填写 `A` 或 `A,B`；留空表示全部链。
+- `ligand`、`ligand_chain`、`ligand_residue_id`：共晶配体的残基名、链和残基号。
+- `center_x/y/z`、`size_x/y/z`：显式盒子。
+- `residue_ids`：定义口袋的蛋白残基号。
+- `keep_hetero_resnames`：要保留的金属或辅因子，如 `ZN,HEM`。
 
-`explicit_box`：填写中心坐标和盒子尺寸。
+## 输出与解释
 
-`residue_box`：填写链和逗号分隔的残基编号，程序根据这些蛋白原子定义盒子。
-
-`blind`：盒子覆盖整条目标蛋白链，结果会标记为探索性。
-
-示例中的 3O96 使用真实共晶配体 `IQO`，不是占位名称 `LIG`。
-
-## 输出
-
-- `work/raw/`：原始 PDB；
-- `work/reference_ligands/`：提取的共晶配体；
-- `work/receptors_clean/`：去除水、配体和其他 HETATM 后的蛋白 PDB；
-- `work/receptors_pdbqt/`：AutoDockTools 生成的受体 PDBQT；
-- `work/ligands_pdb/`：Open Babel 转换后的配体 PDB；
-- `work/ligands_pdbqt/`：AutoDockTools 生成的配体 PDBQT；
-- `work/poses/`：Vina 构象；
-- `results/docking_summary.tsv`：最佳结合能、与参考口袋中心距离、证据等级和结果分类；
-- `results/plip/`：可选 PLIP 报告。
-
-## 结果解释
-
-`high_confidence` 仅用于有共晶口袋证据、结合能达到阈值且最佳构象中心接近参考配体中心的结果。显式盒子和残基盒子结果即使能量达标，也保留为 `manual_review`；盲对接结果标记为 `exploratory`。
+`results/docking_summary.tsv` 包含最佳结合能、构象中心到参考配体中心的距离、证据等级和分类。只有共晶口袋、结合能达标且参考距离达标的结果才标为 `high_confidence`。显式盒子和残基盒子保留为 `manual_review`；盲对接标为 `exploratory`。这避免把无共晶依据的结果误写成已验证结合模式。
 
 ## 测试
 
@@ -94,8 +71,4 @@ python -m compileall src tests
 pytest -q
 ```
 
-GitHub Actions 会在 Python 3.10、3.11 和 3.12 上运行测试。外部软件不在单元测试中调用，真实对接仍需在本地安装相应程序后执行。
-
-## 数据安全
-
-仓库的 `.gitignore` 排除了原始结构、配体、PDBQT、中间结果和日志。不要提交个人路径、密码、Token、许可证文件或第三方软件本体。
+测试包含配置解析、共晶配体实例选择、无原配体口袋策略、受体清理、Vina结果解析和使用假外部工具的端到端烟测。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行。
