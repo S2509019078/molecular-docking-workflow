@@ -9,6 +9,7 @@ class Atom:
     residue: str
     chain: str
     residue_id: int
+    insertion_code: str
     x: float
     y: float
     z: float
@@ -27,12 +28,14 @@ class Target:
     structure_source: str
     structure: str
     pocket_strategy: str
-    chain: str = ""
+    receptor_chains: tuple[str, ...] = ()
     ligand: Optional[str] = None
+    ligand_chain: str = ""
     ligand_residue_id: Optional[int] = None
     center: Optional[tuple[float, float, float]] = None
     size: Optional[tuple[float, float, float]] = None
     residue_ids: tuple[int, ...] = ()
+    keep_hetero_resnames: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
