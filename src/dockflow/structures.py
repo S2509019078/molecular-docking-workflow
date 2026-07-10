@@ -7,7 +7,7 @@ from .models import Atom, Target
 WATER_RESNAMES = {"HOH", "WAT", "DOD"}
 
 
-def acquire_structure(target: Target, raw_dir: Path, force: bool = False) -> Path:
+def acquire_structure(target: Target, raw_dir: Path, project_root: Path, force: bool = False) -> Path:
     raw_dir.mkdir(parents=True, exist_ok=True)
     output = raw_dir / f"{target.name}.pdb"
     if output.exists() and output.stat().st_size > 0 and not force:
@@ -15,7 +15,7 @@ def acquire_structure(target: Target, raw_dir: Path, force: bool = False) -> Pat
     if target.structure_source == "local":
         source = Path(target.structure).expanduser()
         if not source.is_absolute():
-            source = Path.cwd() / source
+            source = project_root / source
         if not source.exists():
             raise FileNotFoundError(source)
         shutil.copyfile(source, output)
@@ -51,13 +51,7 @@ def read_atoms(path: Path) -> list[Atom]:
 
 
 def select_reference_ligand(atoms: list[Atom], target: Target) -> list[Atom]:
-    return [
-        atom for atom in atoms
-        if atom.record == "HETATM"
-        and atom.residue == target.ligand
-        and (not target.ligand_chain or atom.chain == target.ligand_chain)
-        and (target.ligand_residue_id is None or atom.residue_id == target.ligand_residue_id)
-    ]
+    return [atom for atom in atoms if atom.record == "HETATM" and atom.residue == target.ligand and (not target.ligand_chain or atom.chain == target.ligand_chain) and (target.ligand_residue_id is None or atom.residue_id == target.ligand_residue_id)]
 
 
 def extract_reference_ligand(source: Path, target: Target, output: Path) -> Path:
