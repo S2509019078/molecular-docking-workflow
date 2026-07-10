@@ -36,6 +36,7 @@ class Target:
     size: Optional[tuple[float, float, float]] = None
     residue_ids: tuple[int, ...] = ()
     keep_hetero_resnames: tuple[str, ...] = ()
+    ligands: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
