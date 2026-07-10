@@ -1,0 +1,10 @@
+tools:
+  pymol: null
+  obabel: obabel
+  vina: vina
+  plip: plip
+settings:
+  energy_threshold: -8.0
+  distance_threshold_angstrom: 5.0
+  box_padding_angstrom: 4.0
+
