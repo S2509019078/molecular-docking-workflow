@@ -16,6 +16,9 @@ def _default_runs_dir() -> Path:
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args == ["--smoke-test"]:
+        print("DockFlow executable OK")
+        return 0
     if not args:
         args = ["wizard", "--runs-dir", str(_default_runs_dir())]
     try:
