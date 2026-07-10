@@ -3,6 +3,12 @@ from pathlib import Path
 from dockflow import windows_launcher
 
 
+def test_launcher_smoke_test_does_not_enter_cli(monkeypatch, capsys):
+    monkeypatch.setattr(windows_launcher, "cli_main", lambda _args: (_ for _ in ()).throw(AssertionError("CLI should not run")))
+    assert windows_launcher.main(["--smoke-test"]) == 0
+    assert "DockFlow executable OK" in capsys.readouterr().out
+
+
 def test_launcher_defaults_to_wizard(monkeypatch, tmp_path):
     captured = {}
 
