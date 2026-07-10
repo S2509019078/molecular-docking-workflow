@@ -5,7 +5,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from .cli import main as cli_main
+from dockflow.cli import main as cli_main
 
 
 def _default_runs_dir() -> Path:
