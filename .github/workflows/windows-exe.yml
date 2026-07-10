@@ -30,8 +30,9 @@ jobs:
       - name: Smoke test executable
         shell: pwsh
         run: |
-          .\dist\DockFlow.exe --help | Out-File -FilePath help.txt -Encoding utf8
-          if (-not (Select-String -Path help.txt -Pattern "wizard" -Quiet)) { throw "DockFlow help smoke test failed" }
+          $output = .\dist\DockFlow.exe --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "DockFlow executable returned $LASTEXITCODE" }
+          if ($output -notmatch "DockFlow executable OK") { throw "DockFlow executable smoke test failed" }
       - name: Write package notes
         shell: pwsh
         run: |
