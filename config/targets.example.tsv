@@ -1,0 +1,5 @@
+name	structure_source	structure	pocket_strategy	chain	ligand	center_x	center_y	center_z	size_x	size_y	size_z	residue_ids
+downloaded_with_ligand	pdb	3O96	co_crystal	A	LIG							
+local_without_ligand	local	inputs/receptor.pdb	explicit_box	A		10	12	14	20	20	20	
+residue_guided	local	inputs/receptor.pdb	residue_box	A								42,45,78
+
