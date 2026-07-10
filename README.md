@@ -2,6 +2,33 @@
 
 DockFlow 将受体获取、口袋定义、AutoDockTools PDBQT 预处理、Open Babel 配体格式转换、AutoDock Vina 批量对接、结果汇总和可选 PLIP 分析串联成可断点续跑的工作流。以后开展新项目时，只需提供受体信息、配体文件和口袋依据，不需要重新拼接脚本。
 
+## 推荐：交互式新建项目
+
+运行：
+
+```bash
+dockflow wizard
+```
+
+向导会依次要求输入项目名称、4位 PDB ID 或本地 PDB 路径，并自动下载或复制结构、检测蛋白链和可能的共晶配体。检测到候选配体时会列出残基名、链、残基号和原子数供选择；没有明显共晶配体时默认建立盲对接配置。
+
+每次向导都会创建一个独立目录，例如：
+
+```text
+runs/20260711_093000_project_name/
+  config/
+  inputs/structures/
+  inputs/ligands/
+  work/
+  results/
+  logs/
+  RUN_INFO.txt
+```
+
+不同运行的输入、中间文件、结果和日志不会混在一起。把待对接配体放入该运行目录的 `inputs/ligands/` 后，按向导输出的命令运行即可。
+
+外部工具路径按以下顺序解析：配置中的明确路径、系统 PATH、`DOCKFLOW_TOOLS_DIR` 和少量常见安装目录。发现多个候选时不会静默猜测，需在配置中明确指定。
+
 ## 常见输入情况
 
 受体可以直接填写 RCSB PDB ID，也可以使用本地 PDB。口袋支持四种情况：存在共晶配体时用 `co_crystal`；没有原配体但知道口袋坐标时用 `explicit_box`；知道关键残基时用 `residue_box`；没有可靠口袋信息时用 `blind`，但结果会明确标记为探索性。对含金属或必要辅因子的受体，可在 `keep_hetero_resnames` 中指定保留。
@@ -16,12 +43,15 @@ DockFlow 将受体获取、口袋定义、AutoDockTools PDBQT 预处理、Open B
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[test]'
+```
+
+也可以跳过向导，复制示例配置并手工编辑：
+
+```bash
 cp config/config.example.yaml config/config.yaml
 cp config/targets.example.tsv config/targets.tsv
 mkdir -p inputs/ligands
 ```
-
-在 `config/config.yaml` 填写软件路径，把配体放入 `inputs/ligands/`，再编辑 `config/targets.tsv`。
 
 ## 运行
 
@@ -71,4 +101,4 @@ python -m compileall src tests
 pytest -q
 ```
 
-测试覆盖配置解析、共晶配体实例选择、无原配体口袋策略、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。
+测试覆盖配置解析、交互式项目生成、共晶配体检测、无原配体口袋策略、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。

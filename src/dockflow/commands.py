@@ -6,25 +6,60 @@ import subprocess
 from .models import CommandResult
 
 
+def _common_tool_roots() -> list[Path]:
+    values = [
+        os.environ.get("DOCKFLOW_TOOLS_DIR"),
+        os.environ.get("PROGRAMFILES"),
+        os.environ.get("PROGRAMFILES(X86)"),
+        os.environ.get("LOCALAPPDATA"),
+        "/usr/local/bin",
+        "/opt",
+        str(Path.home() / "bin"),
+        str(Path.home() / "tools"),
+    ]
+    roots = []
+    for value in values:
+        if value:
+            path = Path(value).expanduser()
+            if path.exists() and path not in roots:
+                roots.append(path)
+    return roots
+
+
 def discover_tool(configured: str | None, candidates: tuple[str, ...] = ()) -> Path | None:
+    names = []
     if configured:
         expanded = Path(os.path.expandvars(configured)).expanduser()
         if expanded.is_file():
             return expanded.resolve()
         found = shutil.which(configured)
-        return Path(found).resolve() if found else None
+        if found:
+            return Path(found).resolve()
+        names.append(expanded.name)
+    names.extend(name for name in candidates if name not in names)
     for candidate in candidates:
         found = shutil.which(candidate)
         if found:
             return Path(found).resolve()
-    return None
+    matches = []
+    for root in _common_tool_roots():
+        for name in names:
+            direct = root / name
+            if direct.is_file():
+                matches.append(direct.resolve())
+            for subdir in ("bin", "AutoDockTools", "MGLTools", "OpenBabel", "Vina", "PLIP"):
+                candidate = root / subdir / name
+                if candidate.is_file():
+                    matches.append(candidate.resolve())
+    unique = list(dict.fromkeys(matches))
+    return unique[0] if len(unique) == 1 else None
 
 
 def require_tool(configured: str | None, candidates: tuple[str, ...], label: str) -> Path:
     path = discover_tool(configured, candidates)
     if path is None:
         supplied = configured or "/".join(candidates)
-        raise FileNotFoundError(f"required tool not found: {label} ({supplied})")
+        raise FileNotFoundError(f"required tool not found or ambiguous: {label} ({supplied}); configure an explicit path or add it to PATH")
     return path
 
 
