@@ -6,7 +6,7 @@ import shutil
 from .commands import discover_tool, require_tool, run_command
 
 SUPPORTED_LIGAND_EXTENSIONS = {".sdf", ".mol2", ".mol", ".pdb", ".smi", ".smiles", ".pdbqt"}
-SUPPORTED_PREPARATION_BACKENDS = {"auto", "mgltools", "openbabel"}
+SUPPORTED_PREPARATION_BACKENDS = {"auto", "meeko", "mgltools"}
 
 
 def safe_name(value: str) -> str:
@@ -37,27 +37,48 @@ def _mgltools_paths(tools: dict) -> tuple[Path | None, Path | None, Path | None]
     return pythonsh, receptor_script, ligand_script
 
 
+def _meeko_paths(tools: dict) -> tuple[Path | None, Path | None]:
+    receptor = discover_tool(
+        tools.get("meeko_receptor"),
+        ("DockFlow-Meeko-Receptor.exe", "mk_prepare_receptor.py", "mk_prepare_receptor"),
+    )
+    ligand = discover_tool(
+        tools.get("meeko_ligand"),
+        ("DockFlow-Meeko-Ligand.exe", "mk_prepare_ligand.py", "mk_prepare_ligand"),
+    )
+    return receptor, ligand
+
+
 def resolve_preparation_backend(tools: dict, requested: str | None = None) -> str:
     backend = (requested or "auto").strip().lower()
+    if backend == "openbabel":
+        raise ValueError(
+            "Open Babel direct PDBQT generation is no longer supported. "
+            "Use Meeko or AutoDockTools; Open Babel remains available for format conversion and 3D optimization."
+        )
     if backend not in SUPPORTED_PREPARATION_BACKENDS:
         raise ValueError(f"unsupported preparation backend: {backend}")
+    if backend == "meeko":
+        if not all(_meeko_paths(tools)):
+            raise FileNotFoundError("Meeko backend selected, but receptor/ligand preparation helpers are incomplete")
+        return "meeko"
     if backend == "mgltools":
         if not all(_mgltools_paths(tools)):
             raise FileNotFoundError("MGLTools backend selected, but pythonsh/prepare_receptor4.py/prepare_ligand4.py is incomplete")
         return "mgltools"
-    if backend == "openbabel":
-        require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-        return "openbabel"
+    if all(_meeko_paths(tools)):
+        return "meeko"
     if all(_mgltools_paths(tools)):
         return "mgltools"
-    require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-    return "openbabel"
+    raise FileNotFoundError(
+        "No valid PDBQT preparation backend found. Install/use bundled Meeko or configure complete MGLTools."
+    )
 
 
 def preparation_backend_warning(tools: dict, requested: str | None = None) -> str | None:
     backend = resolve_preparation_backend(tools, requested)
-    if backend == "openbabel" and (requested or "auto").strip().lower() == "auto":
-        return "未检测到完整 MGLTools，将自动使用 Open Babel 生成 PDBQT；建议在正式发表前复核质子化与原子类型"
+    if backend == "mgltools":
+        return "当前使用经典 AutoDockTools/MGLTools 生成 PDBQT；建议优先使用随软件提供的 Meeko 后端"
     return None
 
 
@@ -77,19 +98,19 @@ def prepare_receptor(
     settings = settings or {}
     backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
-    if backend == "mgltools":
-        pythonsh, script, _ = _mgltools_paths(tools)
-        command = [str(pythonsh), str(script), "-r", str(clean_pdb), "-o", str(output_pdbqt), "-A", "hydrogens", "-U", "nphs_lps_waters"]
+    if backend == "meeko":
+        receptor_helper, _ = _meeko_paths(tools)
+        command = [str(receptor_helper), "--read_pdb", str(clean_pdb), "-p", str(output_pdbqt)]
         result = run_command(command, log_path)
-        return _check_output(output_pdbqt, result, "prepare_receptor4", log_path)
+        return _check_output(output_pdbqt, result, "Meeko receptor preparation", log_path)
 
-    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-    receptor_ph = settings.get("receptor_protonation_ph", 7.4)
-    command = [str(obabel), str(clean_pdb), "-O", str(output_pdbqt), "-xr", "-xh"]
-    if receptor_ph is not None:
-        command.extend(["-p", f"{float(receptor_ph):g}"])
+    pythonsh, script, _ = _mgltools_paths(tools)
+    command = [
+        str(pythonsh), str(script), "-r", str(clean_pdb), "-o", str(output_pdbqt),
+        "-A", "hydrogens", "-U", "nphs_lps_waters",
+    ]
     result = run_command(command, log_path)
-    return _check_output(output_pdbqt, result, "Open Babel receptor preparation", log_path)
+    return _check_output(output_pdbqt, result, "prepare_receptor4", log_path)
 
 
 def convert_ligand_to_pdb(
@@ -114,6 +135,14 @@ def convert_ligand_to_pdb(
         command.extend(["--minimize", "--ff", str(forcefield), "--steps", str(int(minimization_steps))])
     result = run_command(command, log_path)
     return _check_output(output_pdb, result, "Open Babel conversion", log_path)
+
+
+def convert_ligand_to_sdf(source_pdb: Path, output_sdf: Path, tools: dict, log_path: Path) -> Path:
+    output_sdf.parent.mkdir(parents=True, exist_ok=True)
+    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+    command = [str(obabel), str(source_pdb), "-O", str(output_sdf), "-h"]
+    result = run_command(command, log_path)
+    return _check_output(output_sdf, result, "Open Babel SDF conversion", log_path)
 
 
 def _env_settings() -> dict:
@@ -156,11 +185,19 @@ def prepare_ligand(
 
     backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
     prepare_log = log_dir / f"{ligand_name}_prepare.log"
-    if backend == "mgltools":
+    if backend == "meeko":
+        sdf_dir = pdb_dir.parent / "ligands_sdf"
+        output_sdf = sdf_dir / f"{ligand_name}.sdf"
+        convert_ligand_to_sdf(
+            output_pdb,
+            output_sdf,
+            tools,
+            log_dir / f"{ligand_name}_sdf.log",
+        )
+        _, ligand_helper = _meeko_paths(tools)
+        command = [str(ligand_helper), "-i", str(output_sdf), "-o", str(output_pdbqt)]
+    else:
         pythonsh, _, script = _mgltools_paths(tools)
         command = [str(pythonsh), str(script), "-l", str(output_pdb), "-o", str(output_pdbqt), "-A", "hydrogens"]
-    else:
-        obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-        command = [str(obabel), str(output_pdb), "-O", str(output_pdbqt), "-xh"]
     result = run_command(command, prepare_log)
     return _check_output(output_pdbqt, result, f"{backend} ligand preparation", prepare_log)
