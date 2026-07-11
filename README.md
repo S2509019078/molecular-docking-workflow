@@ -2,39 +2,77 @@
 
 DockFlow 将受体获取、口袋定义、AutoDockTools PDBQT 预处理、Open Babel 配体格式转换、AutoDock Vina 批量对接、结果汇总和可选 PLIP 分析串联成可断点续跑的工作流。以后开展新项目时，只需提供受体信息、配体文件和口袋依据，不需要重新拼接脚本。
 
-## Windows `.exe` 预览版
+## Windows 图形界面版
 
-仓库现在可以通过 GitHub Actions 自动构建 `DockFlow.exe`。双击运行时会直接进入交互式项目向导，并默认把独立项目创建在：
+GitHub Actions 会自动构建两个 Windows 程序：
+
+```text
+DockFlow.exe       图形桌面版，普通用户双击使用
+DockFlow-CLI.exe   命令行版，用于自动化和故障排查
+```
+
+双击 `DockFlow.exe` 后直接进入桌面界面，不再打开终端向导。界面分为四个工作区：
+
+- **新建项目**：输入 4 位 PDB ID 或选择本地 PDB，自动检测蛋白链和可能的共晶配体，批量添加 SDF、MOL2、PDB、PDBQT 等配体文件；
+- **运行中心**：检查外部依赖、启动完整对接流程、停止任务并查看实时日志；
+- **结果分析**：读取 `docking_summary.tsv`，展示靶标、配体、结合能、参考口袋距离和证据等级；
+- **工具设置**：自动检测或手动选择 Vina、Open Babel、MGLTools/AutoDockTools 和可选 PLIP 的路径。
+
+默认项目目录为：
 
 ```text
 Documents\DockFlow\runs\
 ```
 
-也可以在命令行中继续使用完整参数，例如：
+每个项目使用独立目录保存配置、输入、中间文件、日志和结果。当前图形版已提供搜索强度、输出构象数、CPU线程数和口袋边界扩展等常用参数。
 
-```powershell
-DockFlow.exe --help
-DockFlow.exe check --config path\to\config.yaml
-DockFlow.exe all --config path\to\config.yaml
+当前安装包仍不内置以下第三方程序：
+
+```text
+AutoDock Vina
+Open Babel
+MGLTools / AutoDockTools
+PLIP（可选）
 ```
 
-当前 `.exe` 负责项目创建、输入检查、路径解析、任务调度、日志和结果整理。AutoDock Vina、Open Babel、MGLTools/AutoDockTools 仍是外部依赖，不会被打进单文件程序。GitHub Actions 会在 Windows runner 上构建并执行 `--help` 冒烟测试，然后上传 `DockFlow-Windows-x64` 构建产物。
+这些程序需单独安装，然后在“工具设置”页面自动检测或手动指定路径。
 
-## 推荐：交互式新建项目
+## 下载 Windows 构建包
 
-运行：
+进入仓库的 **Actions** 页面，选择最新通过的 `windows-exe` 运行记录，在页面底部下载：
+
+```text
+DockFlow-Windows-x64-GUI
+```
+
+解压后将 `DockFlow.exe` 和 `DockFlow-CLI.exe` 放在同一目录。图形程序运行任务时会调用同目录下的命令行程序。
+
+## 命令行与交互式向导
+
+仍可使用 Python 命令行版本：
 
 ```bash
 dockflow wizard
+dockflow check --config config/config.yaml
+dockflow all --config config/config.yaml
 ```
 
-向导会依次要求输入项目名称、4位 PDB ID 或本地 PDB 路径，并自动下载或复制结构、检测蛋白链和可能的共晶配体。检测到候选配体时会列出残基名、链、残基号和原子数供选择；没有明显共晶配体时默认建立盲对接配置。
+Windows 构建包中的等价命令为：
 
-每次向导都会创建一个独立目录，例如：
+```powershell
+DockFlow-CLI.exe check --config path\to\config.yaml
+DockFlow-CLI.exe all --config path\to\config.yaml
+```
+
+交互式终端向导会依次要求输入项目名称、4位 PDB ID 或本地 PDB 路径，并自动下载或复制结构、检测蛋白链和可能的共晶配体。
+
+## 项目目录
 
 ```text
 runs/20260711_093000_project_name/
   config/
+    config.yaml
+    targets.tsv
   inputs/structures/
   inputs/ligands/
   work/
@@ -43,9 +81,7 @@ runs/20260711_093000_project_name/
   RUN_INFO.txt
 ```
 
-不同运行的输入、中间文件、结果和日志不会混在一起。把待对接配体放入该运行目录的 `inputs/ligands/` 后，按向导输出的命令运行即可。
-
-外部工具路径按以下顺序解析：配置中的明确路径、系统 PATH、`DOCKFLOW_TOOLS_DIR` 和少量常见安装目录。发现多个候选时不会静默猜测，需在配置中明确指定。
+不同运行的输入、中间文件、结果和日志不会混在一起。外部工具路径按以下顺序解析：配置中的明确路径、系统 PATH、`DOCKFLOW_TOOLS_DIR` 和少量常见安装目录。发现多个候选时不会静默猜测，需明确指定。
 
 ## 常见输入情况
 
@@ -53,9 +89,11 @@ runs/20260711_093000_project_name/
 
 配体目录支持 PDB、SDF、MOL2、MOL、SMI、SMILES 和 PDBQT。除已经是 PDBQT 的配体外，其余格式先由 Open Babel 转成 PDB，再由 AutoDockTools `prepare_ligand4.py` 生成 PDBQT。受体由 `prepare_receptor4.py` 生成 PDBQT。
 
-## 安装
+## 从源码安装
 
-自行安装 Python 3.10+、MGLTools/AutoDockTools、Open Babel、AutoDock Vina；PLIP 为可选。仓库不包含第三方软件本体、许可证、密码或 Token。
+自行安装 Python 3.10+、MGLTools/AutoDockTools、Open Babel、AutoDock Vina；PLIP 为可选。
+
+命令行版：
 
 ```bash
 python -m venv .venv
@@ -63,28 +101,14 @@ source .venv/bin/activate
 pip install -e '.[test]'
 ```
 
-也可以跳过向导，复制示例配置并手工编辑：
+图形界面版：
 
 ```bash
-cp config/config.example.yaml config/config.yaml
-cp config/targets.example.tsv config/targets.tsv
-mkdir -p inputs/ligands
+pip install -e '.[gui]'
+dockflow-gui
 ```
 
-## 运行
-
-```bash
-dockflow check --config config/config.yaml
-dockflow all --config config/config.yaml
-```
-
-同时执行 PLIP：
-
-```bash
-dockflow all --config config/config.yaml --with-plip
-```
-
-也可分阶段运行：
+## 分阶段运行
 
 ```bash
 dockflow pockets --config config/config.yaml
@@ -99,13 +123,13 @@ dockflow plip --config config/config.yaml
 
 ## targets.tsv 关键字段
 
-- `structure_source`：`pdb` 或 `local`。
-- `structure`：PDB ID 或相对项目根目录的本地 PDB 路径。
-- `pocket_strategy`：`co_crystal`、`explicit_box`、`residue_box` 或 `blind`。
-- `receptor_chains`：保留的蛋白链，可填写 `A` 或 `A,B`；留空表示全部链。
-- `ligand`、`ligand_chain`、`ligand_residue_id`：共晶配体的残基名、链和残基号。
-- `center_x/y/z`、`size_x/y/z`：显式盒子。
-- `residue_ids`：定义口袋的蛋白残基号。
+- `structure_source`：`pdb` 或 `local`；
+- `structure`：PDB ID 或相对项目根目录的本地 PDB 路径；
+- `pocket_strategy`：`co_crystal`、`explicit_box`、`residue_box` 或 `blind`；
+- `receptor_chains`：保留的蛋白链；
+- `ligand`、`ligand_chain`、`ligand_residue_id`：共晶配体信息；
+- `center_x/y/z`、`size_x/y/z`：显式盒子；
+- `residue_ids`：定义口袋的蛋白残基号；
 - `keep_hetero_resnames`：要保留的金属或辅因子，如 `ZN,HEM`。
 
 ## 输出与解释
@@ -119,4 +143,4 @@ python -m compileall src tests
 pytest -q
 ```
 
-测试覆盖配置解析、交互式项目生成、Windows 启动器、共晶配体检测、无原配体口袋策略、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行，同时使用 Windows runner 构建并冒烟测试 `.exe`。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。
+测试覆盖配置解析、桌面项目服务、交互式项目生成、Windows 启动器、共晶配体检测、受体清理、Vina结果解析和证据分级。GitHub Actions 在 Python 3.10、3.11 和 3.12 上运行，同时使用 Windows runner 构建 GUI 与 CLI，并对图形界面做无显示器启动测试。真实外部软件链仍需在安装了 MGLTools、Open Babel、Vina 和可选 PLIP 的机器上验证。
