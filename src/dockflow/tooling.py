@@ -96,7 +96,6 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
 )
 
-
 SPEC_BY_KEY = {spec.key: spec for spec in TOOL_SPECS}
 
 
@@ -132,6 +131,8 @@ def _known_candidate_paths(root: Path, spec: ToolSpec) -> list[Path]:
         "MGLTools-1.5.7",
         "MGLTools-1.5.6",
         "MGLTools",
+        "AutoDockTools-1.5.7",
+        "AutoDockTools-1.5.6",
         "AutoDockTools",
         "ADFRsuite-1.0",
         "ADFRsuite",
@@ -161,7 +162,7 @@ def find_in_directory(root: Path, spec: ToolSpec, *, recursive: bool = True) -> 
 
     names = {name.lower() for name in spec.candidates}
     if spec.key == "mgltools_pythonsh":
-        names.update({"python.exe"})
+        names.add("python.exe")
     max_depth = 10
     root_depth = len(root.parts)
     skip_names = {".git", "node_modules", "windows", "$recycle.bin", "cache", "__pycache__"}
@@ -208,6 +209,25 @@ def discover_tools(
     return result
 
 
+def discover_tools_deep(
+    configured: dict[str, str] | None = None,
+    *,
+    roots: tuple[Path, ...] | None = None,
+) -> dict[str, Path | None]:
+    """Explicit user-triggered recursive scan of common installation roots."""
+    result = discover_tools(configured)
+    scan_roots = list(roots or tuple(common_discovery_roots()))
+    for spec in TOOL_SPECS:
+        if result.get(spec.key) is not None:
+            continue
+        for root in scan_roots:
+            resolved = find_in_directory(root, spec, recursive=True)
+            if resolved:
+                result[spec.key] = resolved
+                break
+    return result
+
+
 def discover_tools_in_directory(root: Path) -> dict[str, Path | None]:
     root = Path(root).expanduser()
     return {
@@ -216,13 +236,17 @@ def discover_tools_in_directory(root: Path) -> dict[str, Path | None]:
     }
 
 
-def find_mgltools_components(root: Path) -> dict[str, Path | None]:
+def find_autodocktools_components(root: Path) -> dict[str, Path | None]:
     root = Path(root).expanduser()
     keys = ("mgltools_pythonsh", "prepare_receptor4", "prepare_ligand4")
     return {
         key: find_in_directory(root, SPEC_BY_KEY[key], recursive=True)
         for key in keys
     }
+
+
+def find_mgltools_components(root: Path) -> dict[str, Path | None]:
+    return find_autodocktools_components(root)
 
 
 def read_project_tools(config_path: Path) -> dict[str, str]:
