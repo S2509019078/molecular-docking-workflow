@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .commands import discover_tool
 from .config import WorkflowConfig, load_targets
 from .preparation import discover_ligands
+from .tooling import SPEC_BY_KEY, discover_tools
 
 
 @dataclass(frozen=True)
@@ -36,17 +36,23 @@ class PreparationStatus:
         return bool(required) and all(item.state == "完成" for item in required)
 
 
-def _tool_check(config: WorkflowConfig, key: str, label: str, candidates: tuple[str, ...], required: bool = True) -> PreparationCheck:
-    configured = str(config.tools.get(key, "") or "")
-    resolved = discover_tool(configured or None, candidates)
-    if resolved:
-        return PreparationCheck(f"tool:{key}", "环境", label, "完成", str(resolved), required)
+def _tool_check(
+    key: str,
+    resolved: dict[str, Path | None],
+    *,
+    required: bool,
+    detail: str = "",
+) -> PreparationCheck:
+    spec = SPEC_BY_KEY[key]
+    path = resolved.get(key)
+    if path:
+        return PreparationCheck(f"tool:{key}", "环境", spec.label, "完成", str(path), required)
     return PreparationCheck(
         f"tool:{key}",
         "环境",
-        label,
+        spec.label,
         "缺失" if required else "提示",
-        "未检测到；请在“工具设置”中选择明确路径",
+        detail or "未检测到；可在工具设置中自动扫描或选择安装目录",
         required,
     )
 
@@ -65,13 +71,32 @@ def _file_check(key: str, stage: str, label: str, path: Path, detail: str = "") 
 
 def build_preparation_status(config_path: Path) -> PreparationStatus:
     config = WorkflowConfig.from_yaml(Path(config_path))
+    try:
+        ligands = discover_ligands(config.ligand_dir)
+    except Exception as error:
+        ligands = {}
+        ligand_error = error
+    else:
+        ligand_error = None
+
+    needs_obabel = any(path.suffix.lower() in {".sdf", ".mol"} for path in ligands.values())
+    resolved = discover_tools(config.tools)
     checks: list[PreparationCheck] = [
-        _tool_check(config, "mgltools_pythonsh", "AutoDockTools pythonsh", ("pythonsh.exe", "pythonsh")),
-        _tool_check(config, "prepare_receptor4", "prepare_receptor4.py", ("prepare_receptor4.py",)),
-        _tool_check(config, "prepare_ligand4", "prepare_ligand4.py", ("prepare_ligand4.py",)),
-        _tool_check(config, "obabel", "Open Babel（仅格式转换）", ("obabel.exe", "obabel")),
-        _tool_check(config, "vina", "AutoDock Vina", ("vina.exe", "vina")),
-        _tool_check(config, "plip", "PLIP（可选）", ("plip.exe", "plip"), required=False),
+        _tool_check("mgltools_pythonsh", resolved, required=True),
+        _tool_check("prepare_receptor4", resolved, required=True),
+        _tool_check("prepare_ligand4", resolved, required=True),
+        _tool_check(
+            "obabel",
+            resolved,
+            required=needs_obabel,
+            detail=(
+                "当前配体包含SDF/MOL，需要Open Babel仅进行格式转换"
+                if needs_obabel
+                else "当前配体格式无需Open Babel；PLIP分析时可能需要"
+            ),
+        ),
+        _tool_check("vina", resolved, required=True),
+        _tool_check("plip", resolved, required=False),
     ]
 
     try:
@@ -80,11 +105,8 @@ def build_preparation_status(config_path: Path) -> PreparationStatus:
         checks.append(PreparationCheck("project:targets", "输入", "受体配置", "异常", str(error), True))
         return PreparationStatus(tuple(checks))
 
-    try:
-        ligands = discover_ligands(config.ligand_dir)
-    except Exception as error:
-        checks.append(PreparationCheck("project:ligands", "输入", "配体库", "异常", str(error), True))
-        ligands = {}
+    if ligand_error is not None:
+        checks.append(PreparationCheck("project:ligands", "输入", "配体库", "异常", str(ligand_error), True))
 
     for target in targets:
         raw = config.work_dir / "raw" / f"{target.name}.pdb"
@@ -135,8 +157,6 @@ def build_preparation_status(config_path: Path) -> PreparationStatus:
             "补氢、Gasteiger部分电荷、AutoDock原子类型和可旋转键",
         ))
 
-    summary = config.result_dir / "docking_summary.tsv"
-    pose_index = config.result_dir / "docking_poses.tsv"
-    checks.append(_file_check("results:summary", "结果", "对接汇总", summary))
-    checks.append(_file_check("results:poses", "结果", "多构象索引", pose_index))
+    checks.append(_file_check("results:summary", "结果", "对接汇总", config.result_dir / "docking_summary.tsv"))
+    checks.append(_file_check("results:poses", "结果", "多构象索引", config.result_dir / "docking_poses.tsv"))
     return PreparationStatus(tuple(checks))
