@@ -37,39 +37,6 @@ jobs:
           $output = .\dist\DockFlow-CLI.exe --smoke-test
           if ($LASTEXITCODE -ne 0) { throw "DockFlow CLI returned $LASTEXITCODE" }
           if ($output -notmatch "DockFlow executable OK") { throw "DockFlow CLI smoke test failed" }
-      - name: Capture Meeko helper diagnostics
-        shell: pwsh
-        run: |
-          $ligand = .\dist\DockFlow-Meeko-Ligand.exe --smoke-test 2>&1
-          $ligandCode = $LASTEXITCODE
-          $ligand | Set-Content -Path dist\meeko-ligand-smoke.txt -Encoding utf8
-          "exit_code=$ligandCode" | Add-Content -Path dist\meeko-ligand-smoke.txt -Encoding utf8
-          $receptor = .\dist\DockFlow-Meeko-Receptor.exe --smoke-test 2>&1
-          $receptorCode = $LASTEXITCODE
-          $receptor | Set-Content -Path dist\meeko-receptor-smoke.txt -Encoding utf8
-          "exit_code=$receptorCode" | Add-Content -Path dist\meeko-receptor-smoke.txt -Encoding utf8
-          "ligand=$ligandCode" | Set-Content -Path dist\meeko-smoke-status.txt -Encoding utf8
-          "receptor=$receptorCode" | Add-Content -Path dist\meeko-smoke-status.txt -Encoding utf8
-      - name: Upload Meeko diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: DockFlow-Meeko-Diagnostics
-          path: |
-            dist/meeko-ligand-smoke.txt
-            dist/meeko-receptor-smoke.txt
-            dist/meeko-smoke-status.txt
-          if-no-files-found: error
-          retention-days: 7
-      - name: Validate Meeko helpers
-        shell: pwsh
-        run: |
-          $status = Get-Content dist\meeko-smoke-status.txt
-          $ligand = [int](($status | Where-Object { $_ -like "ligand=*" }) -replace "ligand=", "")
-          $receptor = [int](($status | Where-Object { $_ -like "receptor=*" }) -replace "receptor=", "")
-          Get-Content dist\meeko-ligand-smoke.txt | Write-Host
-          Get-Content dist\meeko-receptor-smoke.txt | Write-Host
-          if ($ligand -ne 0) { throw "Meeko ligand helper returned $ligand" }
-          if ($receptor -ne 0) { throw "Meeko receptor helper returned $receptor" }
       - name: Smoke test desktop GUI
         shell: pwsh
         run: |
@@ -87,8 +54,8 @@ jobs:
 
           Double-click DockFlow.exe to open the graphical desktop interface.
           DockFlow-CLI.exe retains command-line and automation support.
-          DockFlow-Meeko-Ligand.exe and DockFlow-Meeko-Receptor.exe are bundled PDBQT preparation helpers and must remain beside DockFlow.exe.
-          AutoDock Vina and Open Babel remain external dependencies. PLIP is optional.
+          AutoDock Vina, Open Babel, AutoDockTools/MGLTools, and optional PLIP remain external dependencies.
+          Open Babel is used only for ligand format conversion. PDBQT generation uses AutoDockTools prepare_receptor4.py and prepare_ligand4.py.
           Projects are stored under Documents\DockFlow\runs by default.
           "@ | Set-Content -Path dist\README-WINDOWS.txt -Encoding utf8
       - name: Upload Windows package
@@ -98,8 +65,6 @@ jobs:
           path: |
             dist/DockFlow.exe
             dist/DockFlow-CLI.exe
-            dist/DockFlow-Meeko-Ligand.exe
-            dist/DockFlow-Meeko-Receptor.exe
             dist/README-WINDOWS.txt
           if-no-files-found: error
           retention-days: 30
