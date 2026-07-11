@@ -37,6 +37,13 @@ jobs:
           $output = .\dist\DockFlow-CLI.exe --smoke-test
           if ($LASTEXITCODE -ne 0) { throw "DockFlow CLI returned $LASTEXITCODE" }
           if ($output -notmatch "DockFlow executable OK") { throw "DockFlow CLI smoke test failed" }
+      - name: Smoke test Meeko helpers
+        shell: pwsh
+        run: |
+          .\dist\DockFlow-Meeko-Ligand.exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Meeko ligand helper returned $LASTEXITCODE" }
+          .\dist\DockFlow-Meeko-Receptor.exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Meeko receptor helper returned $LASTEXITCODE" }
       - name: Smoke test desktop GUI
         shell: pwsh
         run: |
@@ -54,7 +61,8 @@ jobs:
 
           Double-click DockFlow.exe to open the graphical desktop interface.
           DockFlow-CLI.exe retains command-line and automation support.
-          AutoDock Vina, Open Babel, and MGLTools/AutoDockTools are external dependencies.
+          DockFlow-Meeko-Ligand.exe and DockFlow-Meeko-Receptor.exe are bundled PDBQT preparation helpers and must remain beside DockFlow.exe.
+          AutoDock Vina and Open Babel remain external dependencies. PLIP is optional.
           Projects are stored under Documents\DockFlow\runs by default.
           "@ | Set-Content -Path dist\README-WINDOWS.txt -Encoding utf8
       - name: Upload Windows package
@@ -64,6 +72,8 @@ jobs:
           path: |
             dist/DockFlow.exe
             dist/DockFlow-CLI.exe
+            dist/DockFlow-Meeko-Ligand.exe
+            dist/DockFlow-Meeko-Receptor.exe
             dist/README-WINDOWS.txt
           if-no-files-found: error
           retention-days: 30
