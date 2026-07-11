@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .config import WorkflowConfig, load_targets
 from .pipeline import DockingWorkflow
-from .preparation import discover_ligands
+from .preparation import discover_ligands, preparation_backend_warning
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,7 @@ class PreflightReport:
     target_count: int
     ligand_count: int
     docking_task_count: int
+    preparation_backend: str
     problems: tuple[str, ...]
     warnings: tuple[str, ...]
 
@@ -26,6 +27,16 @@ def build_preflight(config_path: Path, require_plip: bool = False) -> PreflightR
     workflow = DockingWorkflow(config)
     problems = list(workflow.check(require_plip=require_plip))
     warnings: list[str] = []
+    try:
+        backend = workflow.preparation_backend()
+        backend_warning = preparation_backend_warning(
+            config.tools,
+            str(config.settings.get("preparation_backend", "auto")),
+        )
+        if backend_warning:
+            warnings.append(backend_warning)
+    except Exception:
+        backend = "unavailable"
     targets = load_targets(config.target_table)
     try:
         ligands = discover_ligands(config.ligand_dir)
@@ -43,4 +54,11 @@ def build_preflight(config_path: Path, require_plip: bool = False) -> PreflightR
         problems.append("没有可执行的受体-配体组合")
     if task_count > 500:
         warnings.append(f"任务数为 {task_count}，运行时间和磁盘占用可能较大")
-    return PreflightReport(len(targets), len(ligands), task_count, tuple(problems), tuple(warnings))
+    return PreflightReport(
+        len(targets),
+        len(ligands),
+        task_count,
+        backend,
+        tuple(problems),
+        tuple(warnings),
+    )
