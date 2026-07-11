@@ -21,8 +21,7 @@ def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     smoke_test = args == ["--gui-smoke-test"]
     try:
-        from dockflow.gui_preview import run_gui
-
+        from dockflow.gui_scientific import run_gui
         return int(run_gui(_default_runs_dir(), smoke_test=smoke_test) or 0)
     except Exception:
         details = traceback.format_exc()
