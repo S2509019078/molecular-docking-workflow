@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import re
 import shutil
 
@@ -64,6 +65,16 @@ def convert_ligand_to_pdb(
     return output_pdb
 
 
+def _env_settings() -> dict:
+    ph_value = os.environ.get("DOCKFLOW_LIGAND_PH", "7.4").strip()
+    return {
+        "ligand_protonation_ph": None if ph_value.lower() in {"", "none", "off"} else float(ph_value),
+        "ligand_minimize": os.environ.get("DOCKFLOW_LIGAND_MINIMIZE", "1").strip().lower() not in {"0", "false", "no", "off"},
+        "ligand_forcefield": os.environ.get("DOCKFLOW_LIGAND_FORCEFIELD", "MMFF94"),
+        "ligand_minimization_steps": int(os.environ.get("DOCKFLOW_LIGAND_STEPS", "250")),
+    }
+
+
 def prepare_ligand(
     source: Path,
     ligand_name: str,
@@ -73,7 +84,7 @@ def prepare_ligand(
     log_dir: Path,
     settings: dict | None = None,
 ) -> Path:
-    settings = settings or {}
+    settings = settings or _env_settings()
     output_pdbqt = pdbqt_dir / f"{ligand_name}.pdbqt"
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
     if source.suffix.lower() == ".pdbqt":
