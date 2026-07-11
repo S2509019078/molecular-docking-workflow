@@ -1,29 +1,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
 
-from PySide6.QtCore import QEvent, Qt, QUrl
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
     QMessageBox,
-    QPushButton,
+    QSplitter,
     QTabWidget,
-    QVBoxLayout,
-    QWidget,
 )
 
+from .drop_validation import valid_ligand_drop, valid_pdb_drop
 from .gui import APP_STYLE
 from .gui_viewers import DockFlowViewerWindow
-from .ligand_library import SUPPORTED_LIGAND_SUFFIXES, inspect_ligand_file
-from .structure_preview import build_structure_preview
+from .ligand_library import inspect_ligand_file
+from .native_viewer import NativePreviewPane
 
-try:
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-except Exception:  # pragma: no cover
-    QWebEngineView = None
 
 PREVIEW_STYLE = APP_STYLE + """
 #Sidebar { background: #0b1220; }
@@ -42,47 +36,15 @@ QListWidget#LigandDropZone { border: 2px dashed #94a3b8; background: #fbfdff; }
 QListWidget#LigandDropZone:hover { border-color: #2563eb; background: #eff6ff; }
 QLineEdit#PdbDropZone { border: 2px dashed #94a3b8; background: #fbfdff; }
 QLineEdit#PdbDropZone:focus { border-color: #2563eb; background: #ffffff; }
+QSplitter::handle { background: #dbe3ef; }
+QSplitter::handle:vertical { height: 5px; }
 """
-
-
-class PreviewPane(QWidget):
-    def __init__(self, title: str, parent=None):
-        super().__init__(parent)
-        self.title = title
-        self.current_html: Path | None = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        if QWebEngineView is not None:
-            self.web = QWebEngineView()
-            layout.addWidget(self.web, 1)
-            self.fallback = None
-        else:
-            self.web = None
-            self.fallback = QLabel("当前安装包未包含 Qt WebEngine。可点击下方按钮在浏览器中查看结构。")
-            self.fallback.setAlignment(Qt.AlignCenter)
-            self.fallback.setWordWrap(True)
-            self.fallback.setStyleSheet("padding:24px;color:#64748b;background:white;")
-            layout.addWidget(self.fallback, 1)
-        open_button = QPushButton("在浏览器中打开")
-        open_button.clicked.connect(self.open_external)
-        layout.addWidget(open_button)
-
-    def load(self, html_path: Path):
-        self.current_html = Path(html_path).resolve()
-        if self.web is not None:
-            self.web.setUrl(QUrl.fromLocalFile(str(self.current_html)))
-        elif self.fallback is not None:
-            self.fallback.setText(f"{self.title}\n\n{self.current_html}")
-
-    def open_external(self):
-        if self.current_html:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.current_html)))
 
 
 class DockFlowPreviewWindow(DockFlowViewerWindow):
     def __init__(self, runs_dir: Path):
         super().__init__(runs_dir)
-        self.setWindowTitle("DockFlow — Molecular Docking Studio 1.0")
+        self.setWindowTitle("DockFlow — Molecular Docking Studio 1.1")
         self._build_inline_preview()
         self._build_preview_menu()
         self._configure_drag_drop()
@@ -94,24 +56,37 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
             button.setText(text)
             button.setEnabled(True)
         for label in self.findChildren(QLabel):
-            if "Preview 0.2" in label.text() or "DockFlow 0.9" in label.text():
-                label.setText("DockFlow 1.0 · Windows x64")
+            if "Preview 0.2" in label.text() or "DockFlow 0.9" in label.text() or "DockFlow 1.0" in label.text():
+                label.setText("DockFlow 1.1 · Windows x64")
                 label.setStyleSheet("color:#cbd5e1;padding:8px 12px;")
 
     def _build_inline_preview(self):
         self.preview_tabs = QTabWidget(objectName="InlinePreview")
-        self.preview_tabs.setMinimumHeight(300)
-        self.receptor_preview = PreviewPane("受体结构")
-        self.ligand_preview = PreviewPane("原始配体")
-        self.prepared_preview = PreviewPane("预处理后配体")
+        self.preview_tabs.setMinimumHeight(220)
+        self.receptor_preview = NativePreviewPane("受体结构")
+        self.ligand_preview = NativePreviewPane("原始配体")
+        self.prepared_preview = NativePreviewPane("预处理后配体")
         self.preview_tabs.addTab(self.receptor_preview, "受体结构")
         self.preview_tabs.addTab(self.ligand_preview, "原始配体")
         self.preview_tabs.addTab(self.prepared_preview, "预处理后")
 
-        self.chain_list.setMaximumHeight(72)
-        parent_layout = self.chain_list.parentWidget().layout()
-        index = parent_layout.indexOf(self.chain_list)
-        parent_layout.insertWidget(index + 1, self.preview_tabs, 1)
+        page = self.pages.widget(0)
+        outer = page.layout()
+        project_splitter = page.findChild(QSplitter)
+        if project_splitter is None:
+            outer.addWidget(self.preview_tabs, 1)
+            return
+        index = outer.indexOf(project_splitter)
+        outer.takeAt(index)
+        vertical = QSplitter(Qt.Vertical)
+        vertical.setChildrenCollapsible(False)
+        vertical.addWidget(project_splitter)
+        vertical.addWidget(self.preview_tabs)
+        vertical.setStretchFactor(0, 3)
+        vertical.setStretchFactor(1, 2)
+        vertical.setSizes([520, 300])
+        outer.insertWidget(index, vertical, 1)
+        self.project_vertical_splitter = vertical
 
     def _build_preview_menu(self):
         menu = self.menuBar().addMenu("结构预览")
@@ -121,7 +96,13 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         ligand_action.triggered.connect(self._preview_selected_ligand)
         prepared_action = QAction("刷新预处理后配体", self)
         prepared_action.triggered.connect(self._preview_prepared_ligand)
+        expand_action = QAction("放大结构预览", self)
+        expand_action.triggered.connect(lambda: self.project_vertical_splitter.setSizes([260, 560]))
+        restore_action = QAction("恢复平衡布局", self)
+        restore_action.triggered.connect(lambda: self.project_vertical_splitter.setSizes([520, 300]))
         menu.addActions([receptor_action, ligand_action, prepared_action])
+        menu.addSeparator()
+        menu.addActions([expand_action, restore_action])
 
     def _configure_drag_drop(self):
         self.structure_input.setObjectName("PdbDropZone")
@@ -139,18 +120,18 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         if watched in {self.structure_input, self.ligand_files}:
             if event.type() == QEvent.DragEnter:
                 paths = self._drop_paths(event.mimeData())
-                accepted = self._valid_pdb_drop(paths) if watched is self.structure_input else self._valid_ligand_drop(paths)
+                accepted = valid_pdb_drop(paths) if watched is self.structure_input else valid_ligand_drop(paths)
                 if accepted:
                     event.acceptProposedAction()
                     return True
             elif event.type() == QEvent.Drop:
                 paths = self._drop_paths(event.mimeData())
-                if watched is self.structure_input and self._valid_pdb_drop(paths):
+                if watched is self.structure_input and valid_pdb_drop(paths):
                     self.structure_input.setText(str(paths[0]))
                     event.acceptProposedAction()
                     self._analyze_structure()
                     return True
-                if watched is self.ligand_files and self._valid_ligand_drop(paths):
+                if watched is self.ligand_files and valid_ligand_drop(paths):
                     self._add_dropped_ligands(paths)
                     event.acceptProposedAction()
                     return True
@@ -164,11 +145,11 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
 
     @staticmethod
     def _valid_pdb_drop(paths: list[Path]) -> bool:
-        return len(paths) == 1 and paths[0].is_file() and paths[0].suffix.lower() == ".pdb"
+        return valid_pdb_drop(paths)
 
     @staticmethod
     def _valid_ligand_drop(paths: list[Path]) -> bool:
-        return bool(paths) and all(path.is_file() and path.suffix.lower() in SUPPORTED_LIGAND_SUFFIXES for path in paths)
+        return valid_ligand_drop(paths)
 
     def _add_dropped_ligands(self, paths: list[Path]):
         errors = []
@@ -190,18 +171,9 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         if errors:
             QMessageBox.warning(self, "部分配体未加入", "\n".join(errors))
 
-    def _preview_file(self, path: Path, pane: PreviewPane, title: str, ligand_only: bool):
-        try:
-            cache = Path(tempfile.gettempdir()) / "DockFlow" / "preview"
-            html = build_structure_preview(
-                path,
-                cache / f"{path.stem}_{'ligand' if ligand_only else 'receptor'}.html",
-                title=title,
-                ligand_only=ligand_only,
-            )
-            pane.load(html)
-        except Exception as error:
-            QMessageBox.warning(self, "结构预览失败", str(error))
+    def _preview_file(self, path: Path, pane: NativePreviewPane, title: str, ligand_only: bool):
+        pane.title = title
+        pane.load_structure(path, ligand_only=ligand_only)
 
     def _analyze_structure(self):
         super()._analyze_structure()
@@ -264,7 +236,7 @@ def run_gui(runs_dir: Path, smoke_test: bool = False) -> int:
         window.show()
         app.processEvents()
         window.close()
-        print("DockFlow GUI drag-drop inline preview OK")
+        print("DockFlow GUI offline native preview OK")
         return 0
     window.show()
     return app.exec()
