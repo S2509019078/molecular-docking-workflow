@@ -6,6 +6,8 @@ import os
 import shutil
 import sys
 
+import yaml
+
 from .commands import discover_tool
 
 
@@ -21,14 +23,17 @@ class ToolSpec:
 TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "mgltools_pythonsh",
-        "AutoDockTools pythonsh",
+        "AutoDockTools Python",
         ("pythonsh.exe", "pythonsh"),
         True,
         (
             "pythonsh.exe",
             "bin/pythonsh.exe",
+            "bin/python.exe",
             "MGLTools-1.5.7/pythonsh.exe",
             "MGLTools-1.5.6/pythonsh.exe",
+            "ADFRsuite-1.0/bin/pythonsh.exe",
+            "ADFRsuite-1.0/bin/python.exe",
         ),
     ),
     ToolSpec(
@@ -38,6 +43,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         True,
         (
             "MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py",
+            "Lib/site-packages/AutoDockTools/Utilities24/prepare_receptor4.py",
+            "lib/site-packages/AutoDockTools/Utilities24/prepare_receptor4.py",
+            "CCSBpckgs/AutoDockTools/Utilities24/prepare_receptor4.py",
             "AutoDockTools/Utilities24/prepare_receptor4.py",
             "Utilities24/prepare_receptor4.py",
         ),
@@ -49,6 +57,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         True,
         (
             "MGLToolsPckgs/AutoDockTools/Utilities24/prepare_ligand4.py",
+            "Lib/site-packages/AutoDockTools/Utilities24/prepare_ligand4.py",
+            "lib/site-packages/AutoDockTools/Utilities24/prepare_ligand4.py",
+            "CCSBpckgs/AutoDockTools/Utilities24/prepare_ligand4.py",
             "AutoDockTools/Utilities24/prepare_ligand4.py",
             "Utilities24/prepare_ligand4.py",
         ),
@@ -69,7 +80,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "AutoDock Vina",
         ("vina.exe", "vina"),
         True,
-        ("vina.exe", "bin/vina.exe", "Vina/vina.exe"),
+        (
+            "vina.exe",
+            "bin/vina.exe",
+            "Vina/vina.exe",
+            "AutoDock-Vina/vina.exe",
+        ),
     ),
     ToolSpec(
         "plip",
@@ -81,13 +97,15 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
 )
 
 
+SPEC_BY_KEY = {spec.key: spec for spec in TOOL_SPECS}
+
+
 def common_discovery_roots() -> list[Path]:
     values = [
         os.environ.get("DOCKFLOW_TOOLS_DIR"),
         os.environ.get("PROGRAMFILES"),
         os.environ.get("PROGRAMFILES(X86)"),
         os.environ.get("LOCALAPPDATA"),
-        os.environ.get("USERPROFILE"),
         str(Path(sys.executable).resolve().parent),
         str(Path.home() / "Desktop"),
         str(Path.home() / "Downloads"),
@@ -115,9 +133,12 @@ def _known_candidate_paths(root: Path, spec: ToolSpec) -> list[Path]:
         "MGLTools-1.5.6",
         "MGLTools",
         "AutoDockTools",
+        "ADFRsuite-1.0",
+        "ADFRsuite",
         "OpenBabel-3.1.1",
         "OpenBabel",
         "Vina",
+        "AutoDock-Vina",
         "PLIP",
         "DockFlowTools",
         "tools",
@@ -139,9 +160,11 @@ def find_in_directory(root: Path, spec: ToolSpec, *, recursive: bool = True) -> 
         return None
 
     names = {name.lower() for name in spec.candidates}
-    max_depth = 8
+    if spec.key == "mgltools_pythonsh":
+        names.update({"python.exe"})
+    max_depth = 10
     root_depth = len(root.parts)
-    skip_names = {".git", "node_modules", "site-packages", "windows", "$recycle.bin"}
+    skip_names = {".git", "node_modules", "windows", "$recycle.bin", "cache", "__pycache__"}
     try:
         for current, directories, files in os.walk(root):
             current_path = Path(current)
@@ -152,8 +175,14 @@ def find_in_directory(root: Path, spec: ToolSpec, *, recursive: bool = True) -> 
             ]
             file_map = {name.lower(): name for name in files}
             for name in names:
-                if name in file_map:
-                    return (current_path / file_map[name]).resolve()
+                if name not in file_map:
+                    continue
+                candidate = (current_path / file_map[name]).resolve()
+                if spec.key == "mgltools_pythonsh" and candidate.name.lower() == "python.exe":
+                    lowered = str(candidate).lower()
+                    if not any(marker in lowered for marker in ("mgltools", "adfrsuite", "autodocktools")):
+                        continue
+                return candidate
     except (OSError, PermissionError):
         return None
     return None
@@ -168,7 +197,7 @@ def discover_tools(
     roots = list(extra_roots) + common_discovery_roots()
     result: dict[str, Path | None] = {}
     for spec in TOOL_SPECS:
-        value = configured.get(spec.key, "").strip()
+        value = str(configured.get(spec.key, "") or "").strip()
         resolved = discover_tool(value or None, spec.candidates)
         if resolved is None:
             for root in roots:
@@ -180,7 +209,6 @@ def discover_tools(
 
 
 def discover_tools_in_directory(root: Path) -> dict[str, Path | None]:
-    """Recursively scan a user-selected directory for all supported external tools."""
     root = Path(root).expanduser()
     return {
         spec.key: find_in_directory(root, spec, recursive=True)
@@ -190,17 +218,37 @@ def discover_tools_in_directory(root: Path) -> dict[str, Path | None]:
 
 def find_mgltools_components(root: Path) -> dict[str, Path | None]:
     root = Path(root).expanduser()
-    wanted = {spec.key: spec for spec in TOOL_SPECS if spec.key in {
-        "mgltools_pythonsh", "prepare_receptor4", "prepare_ligand4"
-    }}
-    return {key: find_in_directory(root, spec, recursive=True) for key, spec in wanted.items()}
+    keys = ("mgltools_pythonsh", "prepare_receptor4", "prepare_ligand4")
+    return {
+        key: find_in_directory(root, SPEC_BY_KEY[key], recursive=True)
+        for key in keys
+    }
+
+
+def read_project_tools(config_path: Path) -> dict[str, str]:
+    config_path = Path(config_path)
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    tools = data.get("tools", {}) or {}
+    return {str(key): str(value or "") for key, value in tools.items()}
+
+
+def write_project_tools(config_path: Path, tools: dict[str, str]) -> Path:
+    config_path = Path(config_path)
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    target = data.setdefault("tools", {})
+    for spec in TOOL_SPECS:
+        if spec.key in tools:
+            target[spec.key] = str(tools[spec.key]).strip()
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def required_tool_problems(configured: dict[str, str] | None = None) -> list[str]:
     resolved = discover_tools(configured)
-    labels = {spec.key: spec.label for spec in TOOL_SPECS}
-    required = {spec.key for spec in TOOL_SPECS if spec.required}
-    return [labels[key] for key in required if resolved.get(key) is None]
+    return [spec.label for spec in TOOL_SPECS if spec.required and resolved.get(spec.key) is None]
 
 
 def executable_version(path: Path) -> str:
