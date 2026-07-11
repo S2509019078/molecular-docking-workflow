@@ -64,7 +64,15 @@ def _js_string(value: str) -> str:
     return json.dumps(value)
 
 
-def build_3dmol_preview(config_path: Path, target: str, ligand: str) -> Path:
+def build_3dmol_preview(
+    config_path: Path,
+    target: str,
+    ligand: str,
+    *,
+    pose_path: Path | None = None,
+    pose_rank: int | None = None,
+    affinity: float | str | None = None,
+) -> Path:
     config = WorkflowConfig.from_yaml(Path(config_path))
     rows = load_summary(config.result_dir / "docking_summary.tsv")
     match = next((row for row in rows if row.get("target") == target and row.get("ligand") == ligand), None)
@@ -72,10 +80,13 @@ def build_3dmol_preview(config_path: Path, target: str, ligand: str) -> Path:
         raise ValueError(f"结果表中未找到 {target}/{ligand}")
 
     receptor = config.work_dir / "receptors_clean" / f"{target}.pdb"
-    pose_value = match.get("pose", "").strip()
-    pose = Path(pose_value)
-    if not pose.is_absolute():
-        pose = config.root / pose
+    if pose_path is None:
+        pose_value = match.get("pose", "").strip()
+        pose = Path(pose_value)
+        if not pose.is_absolute():
+            pose = config.root / pose
+    else:
+        pose = Path(pose_path)
     if not receptor.exists():
         raise FileNotFoundError(receptor)
     if not pose.exists():
@@ -83,8 +94,11 @@ def build_3dmol_preview(config_path: Path, target: str, ligand: str) -> Path:
 
     receptor_text = receptor.read_text(encoding="utf-8", errors="replace")
     pose_text = pose.read_text(encoding="utf-8", errors="replace")
-    title = f"{target} · {ligand} · {match.get('affinity_kcal_mol', '')} kcal/mol"
-    output = config.result_dir / "viewer" / f"{target}__{ligand}.html"
+    affinity_text = str(affinity if affinity is not None else match.get("affinity_kcal_mol", ""))
+    rank_text = f" · mode {pose_rank}" if pose_rank is not None else ""
+    title = f"{target} · {ligand}{rank_text} · {affinity_text} kcal/mol"
+    suffix = f"__mode_{pose_rank:02d}" if pose_rank is not None else ""
+    output = config.result_dir / "viewer" / f"{target}__{ligand}{suffix}.html"
     output.parent.mkdir(parents=True, exist_ok=True)
     html = f"""<!doctype html>
 <html lang="zh-CN">
@@ -101,7 +115,7 @@ header{{height:58px;box-sizing:border-box;padding:16px 22px;background:#111827;b
 </style>
 </head>
 <body>
-<header><strong>{escape(target)} / {escape(ligand)}</strong><span class="badge">{escape(match.get('affinity_kcal_mol',''))} kcal/mol</span></header>
+<header><strong>{escape(target)} / {escape(ligand)}{escape(rank_text)}</strong><span class="badge">{escape(affinity_text)} kcal/mol</span></header>
 <div id="viewer"></div>
 <script>
 const viewer = $3Dmol.createViewer('viewer', {{backgroundColor:'#f8fafc'}});
