@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QProcess, QSettings, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QListWidgetItem, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QListWidgetItem, QMessageBox
 
 from .desktop import cli_program_and_prefix, create_gui_project
 from .gui import APP_STYLE, DockFlowWindow
@@ -98,7 +98,7 @@ class DockFlowWindowV2(DockFlowWindow):
                     except Exception:
                         pass
             dialog = LigandLibraryDialog(self, initial_records=initial)
-            if dialog.exec() != dialog.Accepted:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             self.ligand_records = dialog.selected_records()
             self._refresh_ligand_list()
