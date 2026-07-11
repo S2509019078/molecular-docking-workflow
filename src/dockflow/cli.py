@@ -4,7 +4,29 @@ import argparse
 from .config import WorkflowConfig
 from .pipeline import DockingWorkflow
 from .pose_analysis import index_project_poses, run_plip_for_pose
+from .scientific_qc import build_project_qc, write_project_qc
 from .wizard import interactive_wizard
+
+
+def _run_qc(config_path: Path) -> int:
+    config = WorkflowConfig.from_yaml(config_path)
+    report = build_project_qc(config_path)
+    outputs = write_project_qc(report, config.result_dir / "qc")
+    print(f"scientific mode: {report.mode}")
+    print(f"receptors: {len(report.receptors)}")
+    print(f"ligands: {len(report.ligands)}")
+    print(f"blockers: {len(report.blockers)}")
+    print(f"warnings/confirmations: {len(report.warnings)}")
+    for issue in report.issues:
+        print(f"[{issue.level}] {issue.code} · {issue.subject}: {issue.message}")
+        if issue.recommendation:
+            print(f"  recommendation: {issue.recommendation}")
+    print(f"QC report: {outputs['markdown']}")
+    if report.blockers:
+        return 2
+    if report.warnings:
+        return 1
+    return 0
 
 
 def main(argv=None):
@@ -12,7 +34,7 @@ def main(argv=None):
     parser.add_argument(
         "command",
         choices=[
-            "wizard", "check", "pockets", "prepare-receptors", "prepare-ligands",
+            "wizard", "check", "qc", "pockets", "prepare-receptors", "prepare-ligands",
             "dock", "summarize", "index-poses", "plip", "plip-pose", "all", "status",
         ],
     )
@@ -40,6 +62,8 @@ def main(argv=None):
             return 2
         print("environment OK")
         return 0
+    if args.command == "qc":
+        return _run_qc(args.config)
     if args.command == "status":
         state = config.work_dir / "state.json"
         print(state.read_text(encoding="utf-8") if state.exists() else "no tasks")
@@ -74,6 +98,10 @@ def main(argv=None):
         print(run_plip_for_pose(args.config, args.target, args.ligand, args.pose_rank, force=args.force))
         return 0
     if args.command == "all":
+        qc_exit = _run_qc(args.config)
+        if qc_exit == 2:
+            print("Docking blocked by scientific QC. Resolve blocker issues first.")
+            return 2
         print(workflow.run_all(force=args.force, with_plip=args.with_plip))
         index_project_poses(args.config)
         return 0
