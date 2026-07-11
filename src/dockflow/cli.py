@@ -4,6 +4,7 @@ import argparse
 from .config import WorkflowConfig
 from .pipeline import DockingWorkflow
 from .pose_analysis import index_project_poses, run_plip_for_pose
+from .preprocess_status import build_preparation_status
 from .wizard import interactive_wizard
 
 
@@ -12,8 +13,8 @@ def main(argv=None):
     parser.add_argument(
         "command",
         choices=[
-            "wizard", "check", "pockets", "prepare-receptors", "prepare-ligands",
-            "dock", "summarize", "index-poses", "plip", "plip-pose", "all", "status",
+            "wizard", "check", "pockets", "prepare", "prepare-receptors", "prepare-ligands",
+            "prep-status", "dock", "summarize", "index-poses", "plip", "plip-pose", "all", "status",
         ],
     )
     parser.add_argument("--config", type=Path, default=Path("config/config.yaml"))
@@ -44,9 +45,21 @@ def main(argv=None):
         state = config.work_dir / "state.json"
         print(state.read_text(encoding="utf-8") if state.exists() else "no tasks")
         return 0
+    if args.command == "prep-status":
+        report = build_preparation_status(args.config)
+        for check in report.checks:
+            print(f"[{check.state}] {check.label}: {check.detail}")
+        return 0 if report.complete else (2 if report.blockers else 1)
     if args.command == "pockets":
         workflow.prepare_structures(force=args.force)
         return 0
+    if args.command == "prepare":
+        workflow.prepare_receptors(force=args.force)
+        workflow.prepare_ligands(force=args.force)
+        report = build_preparation_status(args.config)
+        for check in report.checks:
+            print(f"[{check.state}] {check.label}: {check.detail}")
+        return 0 if not report.blockers else 2
     if args.command == "prepare-receptors":
         workflow.prepare_receptors(force=args.force)
         return 0
