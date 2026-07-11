@@ -139,7 +139,7 @@ def find_in_directory(root: Path, spec: ToolSpec, *, recursive: bool = True) -> 
         return None
 
     names = {name.lower() for name in spec.candidates}
-    max_depth = 6
+    max_depth = 8
     root_depth = len(root.parts)
     skip_names = {".git", "node_modules", "site-packages", "windows", "$recycle.bin"}
     try:
@@ -177,6 +177,15 @@ def discover_tools(
                     break
         result[spec.key] = resolved
     return result
+
+
+def discover_tools_in_directory(root: Path) -> dict[str, Path | None]:
+    """Recursively scan a user-selected directory for all supported external tools."""
+    root = Path(root).expanduser()
+    return {
+        spec.key: find_in_directory(root, spec, recursive=True)
+        for spec in TOOL_SPECS
+    }
 
 
 def find_mgltools_components(root: Path) -> dict[str, Path | None]:
