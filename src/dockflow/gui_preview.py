@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -22,9 +22,8 @@ from .structure_preview import build_structure_preview
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
-except Exception:  # pragma: no cover - depends on packaged Qt modules
+except Exception:  # pragma: no cover
     QWebEngineView = None
-
 
 PREVIEW_STYLE = APP_STYLE + """
 #Sidebar { background: #0b1220; }
@@ -88,8 +87,7 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         for button, text in zip(self.nav_buttons, labels):
             button.setText(text)
             button.setEnabled(True)
-        sidebar_labels = self.findChildren(QLabel)
-        for label in sidebar_labels:
+        for label in self.findChildren(QLabel):
             if "Preview 0.2" in label.text():
                 label.setText("DockFlow 0.9 · Windows x64")
                 label.setStyleSheet("color:#cbd5e1;padding:8px 12px;")
@@ -105,7 +103,7 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         self.preview_tabs.addTab(self.ligand_preview, "原始配体")
         self.preview_tabs.addTab(self.prepared_preview, "预处理后")
         self.preview_dock.setWidget(self.preview_tabs)
-        self.addDockWidget(2, self.preview_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.preview_dock)
         self.preview_dock.resize(480, 650)
 
     def _build_preview_menu(self):
@@ -125,12 +123,7 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
     def _preview_file(self, path: Path, pane: PreviewPane, title: str, ligand_only: bool):
         try:
             cache = Path(tempfile.gettempdir()) / "DockFlow" / "preview"
-            html = build_structure_preview(
-                path,
-                cache / f"{path.stem}_{'ligand' if ligand_only else 'receptor'}.html",
-                title=title,
-                ligand_only=ligand_only,
-            )
+            html = build_structure_preview(path, cache / f"{path.stem}_{'ligand' if ligand_only else 'receptor'}.html", title=title, ligand_only=ligand_only)
             pane.load(html)
             self.preview_dock.show()
         except Exception as error:
