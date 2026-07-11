@@ -4,14 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dockflow"
-version = "1.1.0"
-description = "Reusable AutoDockTools and AutoDock Vina batch docking workflow"
+version = "1.2.0"
+description = "Reusable AutoDock Vina molecular docking workflow with Meeko preparation"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
-gui = ["PySide6>=6.7"]
+gui = [
+  "PySide6>=6.7",
+  "meeko>=0.6.1",
+  "rdkit>=2024.3.1",
+  "gemmi>=0.6.7"
+]
 
 [project.scripts]
 dockflow = "dockflow.cli:main"
