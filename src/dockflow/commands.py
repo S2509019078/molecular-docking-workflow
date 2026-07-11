@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 
 from .models import CommandResult
 
@@ -12,6 +13,7 @@ def _common_tool_roots() -> list[Path]:
         os.environ.get("PROGRAMFILES"),
         os.environ.get("PROGRAMFILES(X86)"),
         os.environ.get("LOCALAPPDATA"),
+        str(Path(sys.executable).resolve().parent),
         "/usr/local/bin",
         "/opt",
         str(Path.home() / "bin"),
@@ -47,7 +49,7 @@ def discover_tool(configured: str | None, candidates: tuple[str, ...] = ()) -> P
             direct = root / name
             if direct.is_file():
                 matches.append(direct.resolve())
-            for subdir in ("bin", "AutoDockTools", "MGLTools", "OpenBabel", "Vina", "PLIP"):
+            for subdir in ("bin", "AutoDockTools", "MGLTools", "OpenBabel", "Vina", "PLIP", "DockFlow"):
                 candidate = root / subdir / name
                 if candidate.is_file():
                     matches.append(candidate.resolve())
