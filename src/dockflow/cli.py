@@ -14,18 +14,30 @@ def _run_qc(config_path: Path) -> int:
     report = build_project_qc(config_path)
     outputs = write_project_qc(report, config.result_dir / "qc")
     print(f"scientific mode: {report.mode}")
-    print(f"receptors: {len(report.receptors)}")
-    print(f"ligands: {len(report.ligands)}")
     print(f"blockers: {len(report.blockers)}")
     print(f"warnings/confirmations: {len(report.warnings)}")
     print(f"QC report: {outputs['markdown']}")
     return 2 if report.blockers else (1 if report.warnings else 0)
 
 
+def _prepare(config_path: Path, force: bool = False) -> int:
+    qc = _run_qc(config_path)
+    if qc == 2:
+        print("Preparation blocked by scientific QC.")
+        return 2
+    config = WorkflowConfig.from_yaml(config_path)
+    workflow = DockingWorkflow(config)
+    workflow.prepare_receptors(force=force)
+    workflow.prepare_ligands(force=force)
+    report = build_preparation_report(config_path)
+    print(f"Preparation report: {report}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="dockflow", description="可复用 AutoDock/Vina 分子对接流程")
     parser.add_argument("command", choices=[
-        "wizard", "check", "qc", "preparation-report", "pockets",
+        "wizard", "check", "qc", "preparation-report", "prepare", "pockets",
         "prepare-receptors", "prepare-ligands", "dock", "summarize",
         "index-poses", "plip", "plip-pose", "all", "status",
     ])
@@ -55,6 +67,8 @@ def main(argv=None):
     if args.command == "preparation-report":
         print(build_preparation_report(args.config))
         return 0
+    if args.command == "prepare":
+        return _prepare(args.config, args.force)
     if args.command == "status":
         state = config.work_dir / "state.json"
         print(state.read_text(encoding="utf-8") if state.exists() else "no tasks")
