@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dockflow"
-version = "1.4.0"
-description = "Scientific AutoDock Vina workflow with QC, AutoDockTools preparation, and guided analysis"
+version = "1.4.1"
+description = "Scientific AutoDock Vina workflow with guided AutoDockTools setup, QC, preparation, and analysis"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
 
