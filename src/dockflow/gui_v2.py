@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QProcess, QSettings, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QListWidgetItem, QMessageBox
 
-from .desktop import create_gui_project
+from .desktop import cli_program_and_prefix, create_gui_project
 from .gui import APP_STYLE, DockFlowWindow
 from .gui_ligands import LigandLibraryDialog
 from .ligand_library import LigandRecord, inspect_ligand_file
@@ -72,7 +72,7 @@ class DockFlowWindowV2(DockFlowWindow):
 
     def closeEvent(self, event):
         self._save_preferences()
-        if self.process.state() != self.process.NotRunning:
+        if self.process.state() != QProcess.NotRunning:
             answer = QMessageBox.question(
                 self,
                 "任务仍在运行",
@@ -110,9 +110,7 @@ class DockFlowWindowV2(DockFlowWindow):
         self.ligand_files.clear()
         for record in self.ligand_records:
             warning = f" · {record.warning}" if record.warning else ""
-            item = QListWidgetItem(
-                f"{record.name}  |  {record.source}  |  {record.file_format}  |  {record.status}{warning}"
-            )
+            item = QListWidgetItem(f"{record.name}  |  {record.source}  |  {record.file_format}  |  {record.status}{warning}")
             item.setData(Qt.UserRole, str(record.path))
             item.setToolTip(str(record.path))
             self.ligand_files.addItem(item)
@@ -217,13 +215,13 @@ class DockFlowWindowV2(DockFlowWindow):
             self.force_next_run = False
             self.with_plip_next_run = False
             return
-        if self.process.state() != self.process.NotRunning:
+        if self.process.state() != QProcess.NotRunning:
             QMessageBox.warning(self, "任务正在运行", "请等待当前任务完成，或先停止任务。")
             return
         if not self.current_config:
             QMessageBox.warning(self, "未选择项目", "请先创建项目或打开已有 config.yaml。")
             return
-        program, prefix = __import__("dockflow.desktop", fromlist=["cli_program_and_prefix"]).cli_program_and_prefix()
+        program, prefix = cli_program_and_prefix()
         args = prefix + [command, "--config", str(self.current_config)]
         if self.force_next_run:
             args.append("--force")
