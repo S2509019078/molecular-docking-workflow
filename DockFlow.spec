@@ -3,7 +3,12 @@
 from PyInstaller.utils.hooks import collect_submodules
 
 all_dockflow = collect_submodules("dockflow")
-cli_hiddenimports = [name for name in all_dockflow if name not in {"dockflow.gui", "dockflow.gui_launcher"}]
+gui_hiddenimports = [name for name in all_dockflow if not name.startswith("dockflow.meeko_")]
+cli_hiddenimports = [
+    name for name in all_dockflow
+    if name not in {"dockflow.gui", "dockflow.gui_launcher"}
+    and not name.startswith("dockflow.meeko_")
+]
 
 common = dict(
     pathex=["src"],
@@ -18,8 +23,7 @@ common = dict(
 
 gui_analysis = Analysis(
     ["src/dockflow/gui_launcher.py"],
-    hiddenimports=all_dockflow,
-    excludes=[],
+    hiddenimports=gui_hiddenimports,
     **common,
 )
 gui_pyz = PYZ(gui_analysis.pure)

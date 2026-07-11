@@ -54,7 +54,8 @@ jobs:
 
           Double-click DockFlow.exe to open the graphical desktop interface.
           DockFlow-CLI.exe retains command-line and automation support.
-          AutoDock Vina, Open Babel, and MGLTools/AutoDockTools are external dependencies.
+          AutoDock Vina, Open Babel, AutoDockTools/MGLTools, and optional PLIP remain external dependencies.
+          Open Babel is used only for ligand format conversion. PDBQT generation uses AutoDockTools prepare_receptor4.py and prepare_ligand4.py.
           Projects are stored under Documents\DockFlow\runs by default.
           "@ | Set-Content -Path dist\README-WINDOWS.txt -Encoding utf8
       - name: Upload Windows package

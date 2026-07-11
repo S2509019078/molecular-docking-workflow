@@ -9,32 +9,45 @@ class Result:
     returncode = 0
 
 
-def test_auto_backend_falls_back_to_openbabel(tmp_path):
+def _tools(tmp_path):
     obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
-    tools = {
+    pythonsh = tmp_path / "pythonsh.exe"
+    receptor = tmp_path / "prepare_receptor4.py"
+    ligand = tmp_path / "prepare_ligand4.py"
+    for path in (obabel, pythonsh, receptor, ligand):
+        path.write_bytes(b"x")
+    return {
         "obabel": str(obabel),
-        "mgltools_pythonsh": "missing-pythonsh.exe",
-        "prepare_receptor4": "missing-prepare-receptor.py",
-        "prepare_ligand4": "missing-prepare-ligand.py",
+        "mgltools_pythonsh": str(pythonsh),
+        "prepare_receptor4": str(receptor),
+        "prepare_ligand4": str(ligand),
     }
-    assert preparation.resolve_preparation_backend(tools, "auto") == "openbabel"
-    assert "自动使用 Open Babel" in preparation.preparation_backend_warning(tools, "auto")
 
 
-def test_explicit_mgltools_backend_requires_complete_toolchain(tmp_path):
-    obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
-    with pytest.raises(FileNotFoundError):
-        preparation.resolve_preparation_backend({"obabel": str(obabel)}, "mgltools")
+def test_auto_backend_requires_autodocktools(tmp_path):
+    tools = _tools(tmp_path)
+    assert preparation.resolve_preparation_backend(tools, "auto") == "mgltools"
+    assert preparation.resolve_preparation_backend(tools, "autodocktools") == "mgltools"
 
 
-def test_openbabel_receptor_preparation_command(monkeypatch, tmp_path):
+def test_openbabel_and_meeko_backends_are_rejected(tmp_path):
+    tools = _tools(tmp_path)
+    with pytest.raises(ValueError, match="restricted to AutoDockTools"):
+        preparation.resolve_preparation_backend(tools, "openbabel")
+    with pytest.raises(ValueError, match="restricted to AutoDockTools"):
+        preparation.resolve_preparation_backend(tools, "meeko")
+
+
+def test_autodocktools_backend_requires_complete_toolchain():
+    with pytest.raises(FileNotFoundError, match="pythonsh"):
+        preparation.resolve_preparation_backend({}, "mgltools")
+
+
+def test_autodocktools_receptor_command(monkeypatch, tmp_path):
     clean = tmp_path / "receptor.pdb"
     clean.write_text("ATOM\n", encoding="utf-8")
     output = tmp_path / "receptor.pdbqt"
-    obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
+    tools = _tools(tmp_path)
     captured = {}
 
     def fake_run(command, _log):
@@ -43,30 +56,25 @@ def test_openbabel_receptor_preparation_command(monkeypatch, tmp_path):
         return Result()
 
     monkeypatch.setattr(preparation, "run_command", fake_run)
-    preparation.prepare_receptor(
-        clean,
-        output,
-        {"obabel": str(obabel)},
-        tmp_path / "receptor.log",
-        settings={"preparation_backend": "openbabel", "receptor_protonation_ph": 7.4},
-    )
+    preparation.prepare_receptor(clean, output, tools, tmp_path / "receptor.log")
     command = captured["command"]
-    assert command[0] == str(obabel)
-    assert "-xr" in command
-    assert "-xh" in command
-    assert command[command.index("-p") + 1] == "7.4"
+    assert command[0].endswith("pythonsh.exe")
+    assert command[1].endswith("prepare_receptor4.py")
+    assert command[command.index("-r") + 1] == str(clean)
+    assert "hydrogens" in command
+    assert "nphs_lps_waters" in command
 
 
-def test_openbabel_ligand_pdbqt_fallback(monkeypatch, tmp_path):
+def test_autodocktools_ligand_command_uses_mol2_conversion(monkeypatch, tmp_path):
     source = tmp_path / "ligand.sdf"
     source.write_text("ligand\n", encoding="utf-8")
-    obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
+    tools = _tools(tmp_path)
     commands = []
 
     def fake_run(command, _log):
         commands.append(command)
-        output = Path(command[command.index("-O") + 1])
+        output_flag = "-O" if "-O" in command else "-o"
+        output = Path(command[command.index(output_flag) + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text("ATOM\n", encoding="utf-8")
         return Result()
@@ -77,16 +85,21 @@ def test_openbabel_ligand_pdbqt_fallback(monkeypatch, tmp_path):
         "ligand",
         tmp_path / "pdb",
         tmp_path / "pdbqt",
-        {"obabel": str(obabel)},
+        tools,
         tmp_path / "logs",
-        settings={
-            "preparation_backend": "openbabel",
-            "ligand_protonation_ph": 7.4,
-            "ligand_minimize": False,
-            "ligand_forcefield": "MMFF94",
-            "ligand_minimization_steps": 250,
-        },
+        settings={"preparation_backend": "mgltools"},
     )
     assert output.exists()
-    assert commands[-1][commands[-1].index("-O") + 1].endswith("ligand.pdbqt")
-    assert "-xh" in commands[-1]
+    assert commands[0] == [str(Path(tools["obabel"])), str(source), "-O", str(tmp_path / "ligands_converted" / "ligand.mol2")]
+    prepare = commands[-1]
+    assert prepare[0].endswith("pythonsh.exe")
+    assert prepare[1].endswith("prepare_ligand4.py")
+    assert prepare[prepare.index("-l") + 1].endswith("ligand.mol2")
+    assert "hydrogens" in prepare
+
+
+def test_smiles_is_rejected_without_reviewed_3d_coordinates(tmp_path):
+    source = tmp_path / "ligand.smi"
+    source.write_text("CCO\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="3D coordinates"):
+        preparation.ligand_input_for_autodocktools(source, "ligand", tmp_path, _tools(tmp_path), tmp_path)

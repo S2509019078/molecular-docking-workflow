@@ -37,7 +37,8 @@ class NativeMoleculeCanvas(QWidget):
         self.pitch = 0.35
         self.zoom = 1.0
         self._last_pos = None
-        self.setMinimumSize(360, 260)
+        self._interacting = False
+        self.setMinimumSize(320, 240)
         self.setMouseTracking(True)
         self.setStyleSheet("background:#f8fafc;border:1px solid #dbe3ef;")
 
@@ -64,6 +65,7 @@ class NativeMoleculeCanvas(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._last_pos = event.position()
+            self._interacting = True
 
     def mouseMoveEvent(self, event):
         if self._last_pos is None or not (event.buttons() & Qt.LeftButton):
@@ -76,6 +78,8 @@ class NativeMoleculeCanvas(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._last_pos = None
+        self._interacting = False
+        self.update()
 
     def _project(self, atom, center, scale):
         x = atom.x - center[0]
@@ -91,7 +95,9 @@ class NativeMoleculeCanvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        scene_size = len(self.scene.atoms) if self.scene else 0
+        if not self._interacting and scene_size <= 1600:
+            painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#f8fafc"))
         if not self.scene:
             painter.setPen(QColor("#64748b"))
@@ -102,29 +108,36 @@ class NativeMoleculeCanvas(QWidget):
         scale = min(self.width(), self.height()) * 0.42 / radius * self.zoom
         projected = [self._project(atom, self.scene.center, scale) for atom in self.scene.atoms]
 
-        painter.setPen(QPen(QColor("#94a3b8"), 1.4))
+        painter.setPen(QPen(QColor("#94a3b8"), 1.2 if scene_size < 1200 else 0.8))
         for first, second in self.scene.bonds:
             if first >= len(projected) or second >= len(projected):
                 continue
             painter.drawLine(projected[first][0], projected[second][0])
 
         order = sorted(range(len(projected)), key=lambda index: projected[index][1])
+        protein_stride = max(1, scene_size // 700)
         for index in order:
             atom = self.scene.atoms[index]
+            if not atom.hetero and scene_size > 900 and index % protein_stride:
+                continue
             point, depth = projected[index]
             color = _ELEMENT_COLORS.get(atom.element.upper(), QColor("#64748b"))
             if atom.hetero:
-                radius_px = max(3.0, min(9.0, 5.2 * self.zoom))
+                radius_px = max(3.0, min(8.0, 5.0 * self.zoom))
             else:
-                radius_px = max(2.0, min(6.0, 3.5 * self.zoom))
-            painter.setPen(QPen(QColor("#334155"), 0.7))
+                radius_px = max(1.2, min(3.8, 2.4 * self.zoom))
+            painter.setPen(QPen(QColor("#334155"), 0.5))
             painter.setBrush(QBrush(color))
             painter.drawEllipse(point, radius_px, radius_px)
 
         painter.setPen(QColor("#0f172a"))
         painter.drawText(14, 22, self.title)
         painter.setPen(QColor("#64748b"))
-        painter.drawText(14, 42, f"{len(self.scene.atoms)} atoms · {len(self.scene.bonds)} bonds · {self.scene.representation}")
+        painter.drawText(
+            14,
+            42,
+            f"{len(self.scene.atoms)} atoms · {len(self.scene.bonds)} bonds · {self.scene.representation}",
+        )
 
 
 class NativePreviewPane(QWidget):
@@ -151,7 +164,7 @@ class NativePreviewPane(QWidget):
         self.current_path = Path(path)
         try:
             self.canvas.set_structure(self.current_path, title=self.title, ligand_only=ligand_only)
-            self.message.setText("左键拖动旋转，滚轮缩放。该视图完全离线。")
+            self.message.setText("左键拖动旋转，滚轮缩放。大蛋白将自动抽稀显示以保持流畅。")
         except Exception as error:
             self.canvas.scene = None
             self.canvas.update()

@@ -1,12 +1,11 @@
 from pathlib import Path
-import os
 import re
 import shutil
 
 from .commands import discover_tool, require_tool, run_command
 
-SUPPORTED_LIGAND_EXTENSIONS = {".sdf", ".mol2", ".mol", ".pdb", ".smi", ".smiles", ".pdbqt"}
-SUPPORTED_PREPARATION_BACKENDS = {"auto", "mgltools", "openbabel"}
+SUPPORTED_LIGAND_EXTENSIONS = {".sdf", ".mol2", ".mol", ".pdb", ".pdbqt", ".smi", ".smiles"}
+SUPPORTED_PREPARATION_BACKENDS = {"auto", "mgltools", "autodocktools"}
 
 
 def safe_name(value: str) -> str:
@@ -39,25 +38,24 @@ def _mgltools_paths(tools: dict) -> tuple[Path | None, Path | None, Path | None]
 
 def resolve_preparation_backend(tools: dict, requested: str | None = None) -> str:
     backend = (requested or "auto").strip().lower()
-    if backend not in SUPPORTED_PREPARATION_BACKENDS:
+    if backend == "autodocktools":
+        backend = "mgltools"
+    if backend in {"openbabel", "meeko"}:
+        raise ValueError(
+            "PDBQT generation is restricted to AutoDockTools/MGLTools. "
+            "Open Babel is used only for file-format conversion."
+        )
+    if backend not in {"auto", "mgltools"}:
         raise ValueError(f"unsupported preparation backend: {backend}")
-    if backend == "mgltools":
-        if not all(_mgltools_paths(tools)):
-            raise FileNotFoundError("MGLTools backend selected, but pythonsh/prepare_receptor4.py/prepare_ligand4.py is incomplete")
-        return "mgltools"
-    if backend == "openbabel":
-        require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-        return "openbabel"
-    if all(_mgltools_paths(tools)):
-        return "mgltools"
-    require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-    return "openbabel"
+    if not all(_mgltools_paths(tools)):
+        raise FileNotFoundError(
+            "AutoDockTools backend is incomplete: configure pythonsh, prepare_receptor4.py, and prepare_ligand4.py"
+        )
+    return "mgltools"
 
 
 def preparation_backend_warning(tools: dict, requested: str | None = None) -> str | None:
-    backend = resolve_preparation_backend(tools, requested)
-    if backend == "openbabel" and (requested or "auto").strip().lower() == "auto":
-        return "未检测到完整 MGLTools，将自动使用 Open Babel 生成 PDBQT；建议在正式发表前复核质子化与原子类型"
+    resolve_preparation_backend(tools, requested)
     return None
 
 
@@ -75,55 +73,65 @@ def prepare_receptor(
     settings: dict | None = None,
 ) -> Path:
     settings = settings or {}
-    backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
+    resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
-    if backend == "mgltools":
-        pythonsh, script, _ = _mgltools_paths(tools)
-        command = [str(pythonsh), str(script), "-r", str(clean_pdb), "-o", str(output_pdbqt), "-A", "hydrogens", "-U", "nphs_lps_waters"]
-        result = run_command(command, log_path)
-        return _check_output(output_pdbqt, result, "prepare_receptor4", log_path)
-
-    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-    receptor_ph = settings.get("receptor_protonation_ph", 7.4)
-    command = [str(obabel), str(clean_pdb), "-O", str(output_pdbqt), "-xr", "-xh"]
-    if receptor_ph is not None:
-        command.extend(["-p", f"{float(receptor_ph):g}"])
+    pythonsh, script, _ = _mgltools_paths(tools)
+    command = [
+        str(pythonsh),
+        str(script),
+        "-r",
+        str(clean_pdb),
+        "-o",
+        str(output_pdbqt),
+        "-A",
+        "hydrogens",
+        "-U",
+        "nphs_lps_waters",
+    ]
     result = run_command(command, log_path)
-    return _check_output(output_pdbqt, result, "Open Babel receptor preparation", log_path)
+    return _check_output(output_pdbqt, result, "AutoDockTools prepare_receptor4", log_path)
 
 
-def convert_ligand_to_pdb(
+def convert_ligand_format(source: Path, output_mol2: Path, tools: dict, log_path: Path) -> Path:
+    """Convert a coordinate-bearing ligand to MOL2 without chemical modification."""
+    source = Path(source)
+    suffix = source.suffix.lower()
+    if suffix in {".smi", ".smiles"}:
+        raise ValueError(
+            f"{source.name} contains no validated 3D coordinates. "
+            "Provide a chemically reviewed 3D SDF or MOL2 before docking."
+        )
+    output_mol2.parent.mkdir(parents=True, exist_ok=True)
+    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+    command = [str(obabel), str(source), "-O", str(output_mol2)]
+    result = run_command(command, log_path)
+    return _check_output(output_mol2, result, "Open Babel format conversion", log_path)
+
+
+def ligand_input_for_autodocktools(
     source: Path,
-    output_pdb: Path,
+    ligand_name: str,
+    converted_dir: Path,
     tools: dict,
-    log_path: Path,
-    *,
-    protonation_ph: float | None = 7.4,
-    minimize: bool = True,
-    forcefield: str = "MMFF94",
-    minimization_steps: int = 250,
+    log_dir: Path,
 ) -> Path:
-    output_pdb.parent.mkdir(parents=True, exist_ok=True)
-    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-    command = [str(obabel), str(source), "-O", str(output_pdb)]
-    if source.suffix.lower() in {".smi", ".smiles"}:
-        command.append("--gen3d")
-    if protonation_ph is not None:
-        command.extend(["-p", f"{float(protonation_ph):g}"])
-    if minimize:
-        command.extend(["--minimize", "--ff", str(forcefield), "--steps", str(int(minimization_steps))])
-    result = run_command(command, log_path)
-    return _check_output(output_pdb, result, "Open Babel conversion", log_path)
-
-
-def _env_settings() -> dict:
-    ph_value = os.environ.get("DOCKFLOW_LIGAND_PH", "7.4").strip()
-    return {
-        "ligand_protonation_ph": None if ph_value.lower() in {"", "none", "off"} else float(ph_value),
-        "ligand_minimize": os.environ.get("DOCKFLOW_LIGAND_MINIMIZE", "1").strip().lower() not in {"0", "false", "no", "off"},
-        "ligand_forcefield": os.environ.get("DOCKFLOW_LIGAND_FORCEFIELD", "MMFF94"),
-        "ligand_minimization_steps": int(os.environ.get("DOCKFLOW_LIGAND_STEPS", "250")),
-    }
+    source = Path(source)
+    suffix = source.suffix.lower()
+    if suffix in {".pdb", ".mol2", ".pdbqt"}:
+        return source
+    if suffix in {".sdf", ".mol"}:
+        return convert_ligand_format(
+            source,
+            converted_dir / f"{ligand_name}.mol2",
+            tools,
+            log_dir / f"{ligand_name}_format_conversion.log",
+        )
+    if suffix in {".smi", ".smiles"}:
+        raise ValueError(
+            f"{source.name} has no validated 3D coordinates. "
+            "Export a 3D SDF/MOL2 with the intended formal charge and protonation state first."
+        )
+    raise ValueError(f"unsupported ligand format for AutoDockTools: {suffix}")
 
 
 def prepare_ligand(
@@ -135,32 +143,32 @@ def prepare_ligand(
     log_dir: Path,
     settings: dict | None = None,
 ) -> Path:
-    settings = settings or _env_settings()
+    settings = settings or {}
     output_pdbqt = pdbqt_dir / f"{ligand_name}.pdbqt"
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
     if source.suffix.lower() == ".pdbqt":
         shutil.copyfile(source, output_pdbqt)
         return output_pdbqt
 
-    output_pdb = pdb_dir / f"{ligand_name}.pdb"
-    convert_ligand_to_pdb(
+    resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
+    prepared_input = ligand_input_for_autodocktools(
         source,
-        output_pdb,
+        ligand_name,
+        pdb_dir.parent / "ligands_converted",
         tools,
-        log_dir / f"{ligand_name}_obabel.log",
-        protonation_ph=settings.get("ligand_protonation_ph", 7.4),
-        minimize=bool(settings.get("ligand_minimize", True)),
-        forcefield=str(settings.get("ligand_forcefield", "MMFF94")),
-        minimization_steps=int(settings.get("ligand_minimization_steps", 250)),
+        log_dir,
     )
-
-    backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
+    pythonsh, _, script = _mgltools_paths(tools)
     prepare_log = log_dir / f"{ligand_name}_prepare.log"
-    if backend == "mgltools":
-        pythonsh, _, script = _mgltools_paths(tools)
-        command = [str(pythonsh), str(script), "-l", str(output_pdb), "-o", str(output_pdbqt), "-A", "hydrogens"]
-    else:
-        obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
-        command = [str(obabel), str(output_pdb), "-O", str(output_pdbqt), "-xh"]
+    command = [
+        str(pythonsh),
+        str(script),
+        "-l",
+        str(prepared_input),
+        "-o",
+        str(output_pdbqt),
+        "-A",
+        "hydrogens",
+    ]
     result = run_command(command, prepare_log)
-    return _check_output(output_pdbqt, result, f"{backend} ligand preparation", prepare_log)
+    return _check_output(output_pdbqt, result, "AutoDockTools prepare_ligand4", prepare_log)

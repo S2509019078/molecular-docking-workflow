@@ -37,14 +37,22 @@ QListWidget#LigandDropZone:hover { border-color: #2563eb; background: #eff6ff; }
 QLineEdit#PdbDropZone { border: 2px dashed #94a3b8; background: #fbfdff; }
 QLineEdit#PdbDropZone:focus { border-color: #2563eb; background: #ffffff; }
 QSplitter::handle { background: #dbe3ef; }
-QSplitter::handle:vertical { height: 5px; }
+QSplitter::handle:vertical { height: 6px; }
+QTableView::item:selected, QTableWidget::item:selected {
+    background: #2563eb;
+    color: #ffffff;
+}
+QTableView::item:selected:!active, QTableWidget::item:selected:!active {
+    background: #3b82f6;
+    color: #ffffff;
+}
 """
 
 
 class DockFlowPreviewWindow(DockFlowViewerWindow):
     def __init__(self, runs_dir: Path):
         super().__init__(runs_dir)
-        self.setWindowTitle("DockFlow — Molecular Docking Studio 1.1")
+        self.setWindowTitle("DockFlow — Molecular Docking Studio 1.2")
         self._build_inline_preview()
         self._build_preview_menu()
         self._configure_drag_drop()
@@ -56,13 +64,13 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
             button.setText(text)
             button.setEnabled(True)
         for label in self.findChildren(QLabel):
-            if "Preview 0.2" in label.text() or "DockFlow 0.9" in label.text() or "DockFlow 1.0" in label.text():
-                label.setText("DockFlow 1.1 · Windows x64")
+            if any(version in label.text() for version in ("Preview 0.2", "DockFlow 0.9", "DockFlow 1.0", "DockFlow 1.1")):
+                label.setText("DockFlow 1.2 · Windows x64")
                 label.setStyleSheet("color:#cbd5e1;padding:8px 12px;")
 
     def _build_inline_preview(self):
         self.preview_tabs = QTabWidget(objectName="InlinePreview")
-        self.preview_tabs.setMinimumHeight(220)
+        self.preview_tabs.setMinimumHeight(240)
         self.receptor_preview = NativePreviewPane("受体结构")
         self.ligand_preview = NativePreviewPane("原始配体")
         self.prepared_preview = NativePreviewPane("预处理后配体")
@@ -76,6 +84,7 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         if project_splitter is None:
             outer.addWidget(self.preview_tabs, 1)
             return
+        project_splitter.setMinimumHeight(430)
         index = outer.indexOf(project_splitter)
         outer.takeAt(index)
         vertical = QSplitter(Qt.Vertical)
@@ -84,7 +93,7 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         vertical.addWidget(self.preview_tabs)
         vertical.setStretchFactor(0, 3)
         vertical.setStretchFactor(1, 2)
-        vertical.setSizes([520, 300])
+        vertical.setSizes([520, 320])
         outer.insertWidget(index, vertical, 1)
         self.project_vertical_splitter = vertical
 
@@ -97,9 +106,9 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         prepared_action = QAction("刷新预处理后配体", self)
         prepared_action.triggered.connect(self._preview_prepared_ligand)
         expand_action = QAction("放大结构预览", self)
-        expand_action.triggered.connect(lambda: self.project_vertical_splitter.setSizes([260, 560]))
+        expand_action.triggered.connect(lambda: self.project_vertical_splitter.setSizes([430, 520]))
         restore_action = QAction("恢复平衡布局", self)
-        restore_action.triggered.connect(lambda: self.project_vertical_splitter.setSizes([520, 300]))
+        restore_action.triggered.connect(lambda: self.project_vertical_splitter.setSizes([520, 320]))
         menu.addActions([receptor_action, ligand_action, prepared_action])
         menu.addSeparator()
         menu.addActions([expand_action, restore_action])
