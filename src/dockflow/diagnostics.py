@@ -25,10 +25,12 @@ class ToolDiagnostic:
 
 TOOL_SPECS = {
     "vina": ("AutoDock Vina", ("vina.exe", "vina"), True, "安装 AutoDock Vina，并选择 vina.exe"),
-    "obabel": ("Open Babel", ("obabel.exe", "obabel"), True, "安装 Open Babel 3，并选择 obabel.exe"),
-    "mgltools_pythonsh": ("MGLTools pythonsh", ("pythonsh.exe", "pythonsh"), False, "可选；安装后可使用 AutoDockTools 经典 PDBQT 预处理"),
-    "prepare_receptor4": ("prepare_receptor4.py", ("prepare_receptor4.py",), False, "可选；与完整 MGLTools 后端配套使用"),
-    "prepare_ligand4": ("prepare_ligand4.py", ("prepare_ligand4.py",), False, "可选；与完整 MGLTools 后端配套使用"),
+    "obabel": ("Open Babel", ("obabel.exe", "obabel"), True, "安装 Open Babel 3，用于三维化、补氢和格式转换"),
+    "meeko_receptor": ("Meeko receptor helper", ("DockFlow-Meeko-Receptor.exe", "mk_prepare_receptor.py", "mk_prepare_receptor"), False, "新版安装包应自带 DockFlow-Meeko-Receptor.exe"),
+    "meeko_ligand": ("Meeko ligand helper", ("DockFlow-Meeko-Ligand.exe", "mk_prepare_ligand.py", "mk_prepare_ligand"), False, "新版安装包应自带 DockFlow-Meeko-Ligand.exe"),
+    "mgltools_pythonsh": ("MGLTools pythonsh", ("pythonsh.exe", "pythonsh"), False, "可选；仅经典 AutoDockTools 后端需要"),
+    "prepare_receptor4": ("prepare_receptor4.py", ("prepare_receptor4.py",), False, "可选；仅经典 AutoDockTools 后端需要"),
+    "prepare_ligand4": ("prepare_ligand4.py", ("prepare_ligand4.py",), False, "可选；仅经典 AutoDockTools 后端需要"),
     "plip": ("PLIP", ("plip.exe", "plip"), False, "仅在需要相互作用分析时安装 PLIP"),
 }
 
@@ -45,6 +47,8 @@ def diagnose_tools(config_path: Path) -> list[ToolDiagnostic]:
         configured = str(config.tools.get(key, "") or "")
         resolved = discover_tool(configured or None, candidates)
         effective_required = required
+        if backend == "meeko" and key in {"meeko_receptor", "meeko_ligand"}:
+            effective_required = True
         if backend == "mgltools" and key in {"mgltools_pythonsh", "prepare_receptor4", "prepare_ligand4"}:
             effective_required = True
         rows.append(ToolDiagnostic(key, label, configured, resolved, effective_required, hint))
