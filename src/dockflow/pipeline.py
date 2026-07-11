@@ -7,7 +7,7 @@ from .commands import require_tool, run_command
 from .config import WorkflowConfig, load_targets
 from .models import DockingRecord, PocketDefinition, Target
 from .pockets import resolve_pocket
-from .preparation import discover_ligands, prepare_ligand, prepare_receptor
+from .preparation import discover_ligands, prepare_ligand, prepare_receptor, resolve_preparation_backend
 from .qc import best_affinity, classify_result, pose_center
 from .state import StateStore, outputs_are_complete
 from .structures import acquire_structure, clean_receptor, extract_reference_ligand, read_atoms
@@ -25,19 +25,29 @@ class DockingWorkflow:
     def _manifest(self, stage: str, name: str) -> Path:
         return self.config.work_dir / "manifests" / stage / f"{name}.json"
 
+    def preparation_backend(self) -> str:
+        return resolve_preparation_backend(
+            self.config.tools,
+            str(self._setting("preparation_backend", "auto")),
+        )
+
     def check(self, require_plip: bool = False) -> list[str]:
         problems: list[str] = []
         for path, label in ((self.config.target_table, "target table"), (self.config.ligand_dir, "ligand directory")):
             if not path.exists():
                 problems.append(f"missing {label}: {path}")
-        checks = [("mgltools_pythonsh", ("pythonsh",), "MGLTools pythonsh"), ("prepare_receptor4", (), "prepare_receptor4.py"), ("prepare_ligand4", (), "prepare_ligand4.py"), ("obabel", ("obabel",), "Open Babel"), ("vina", ("vina",), "AutoDock Vina")]
+        checks = [("obabel", ("obabel.exe", "obabel"), "Open Babel"), ("vina", ("vina.exe", "vina"), "AutoDock Vina")]
         if require_plip:
-            checks.append(("plip", ("plip",), "PLIP"))
+            checks.append(("plip", ("plip.exe", "plip"), "PLIP"))
         for key, candidates, label in checks:
             try:
                 require_tool(self.config.tools.get(key), candidates, label)
             except FileNotFoundError as error:
                 problems.append(str(error))
+        try:
+            self.preparation_backend()
+        except (FileNotFoundError, ValueError) as error:
+            problems.append(str(error))
         if self.config.ligand_dir.exists():
             try:
                 discover_ligands(self.config.ligand_dir)
@@ -88,10 +98,24 @@ class DockingWorkflow:
     def prepare_receptors(self, force: bool = False) -> dict[str, Path]:
         structures = self.prepare_structures(force=force)
         result = {}
+        backend = self.preparation_backend()
+        receptor_settings = {
+            "preparation_backend": backend,
+            "receptor_protonation_ph": self._setting("receptor_protonation_ph", 7.4),
+        }
         for target in self.targets:
             clean = structures[target.name][0]
             output = self.config.work_dir / "receptors_pdbqt" / f"{target.name}.pdbqt"
-            payload = build_payload(inputs={"clean_receptor": clean}, parameters={"prepare": "hydrogens,nphs_lps_waters"}, tools={"pythonsh": str(self.config.tools.get("mgltools_pythonsh", "")), "prepare_receptor4": str(self.config.tools.get("prepare_receptor4", ""))})
+            payload = build_payload(
+                inputs={"clean_receptor": clean},
+                parameters=receptor_settings,
+                tools={
+                    "backend": backend,
+                    "pythonsh": str(self.config.tools.get("mgltools_pythonsh", "")),
+                    "prepare_receptor4": str(self.config.tools.get("prepare_receptor4", "")),
+                    "obabel": str(self.config.tools.get("obabel", "")),
+                },
+            )
             manifest = self._manifest("receptors", target.name)
             key = f"receptor:{target.name}"
             if not force and manifest_valid(manifest, payload, [output]):
@@ -99,7 +123,7 @@ class DockingWorkflow:
                 continue
             self.state.begin(key)
             try:
-                prepare_receptor(clean, output, self.config.tools, self.config.work_dir / "logs" / "receptors" / f"{target.name}.log")
+                prepare_receptor(clean, output, self.config.tools, self.config.work_dir / "logs" / "receptors" / f"{target.name}.log", settings=receptor_settings)
                 write_manifest(manifest, payload, [output])
                 self.state.finish(key, [output])
                 result[target.name] = output
@@ -111,7 +135,9 @@ class DockingWorkflow:
     def prepare_ligands(self, force: bool = False) -> dict[str, Path]:
         sources = discover_ligands(self.config.ligand_dir)
         result = {}
+        backend = self.preparation_backend()
         ligand_settings = {
+            "preparation_backend": backend,
             "ligand_protonation_ph": self._setting("ligand_protonation_ph", 7.4),
             "ligand_minimize": self._setting("ligand_minimize", True),
             "ligand_forcefield": self._setting("ligand_forcefield", "MMFF94"),
@@ -119,7 +145,16 @@ class DockingWorkflow:
         }
         for name, source in sources.items():
             output = self.config.work_dir / "ligands_pdbqt" / f"{name}.pdbqt"
-            payload = build_payload(inputs={"ligand_source": source}, parameters={"source_suffix": source.suffix.lower(), **ligand_settings}, tools={"pythonsh": str(self.config.tools.get("mgltools_pythonsh", "")), "prepare_ligand4": str(self.config.tools.get("prepare_ligand4", "")), "obabel": str(self.config.tools.get("obabel", ""))})
+            payload = build_payload(
+                inputs={"ligand_source": source},
+                parameters={"source_suffix": source.suffix.lower(), **ligand_settings},
+                tools={
+                    "backend": backend,
+                    "pythonsh": str(self.config.tools.get("mgltools_pythonsh", "")),
+                    "prepare_ligand4": str(self.config.tools.get("prepare_ligand4", "")),
+                    "obabel": str(self.config.tools.get("obabel", "")),
+                },
+            )
             manifest = self._manifest("ligands", name)
             key = f"ligand:{name}"
             if not force and manifest_valid(manifest, payload, [output]):
@@ -140,7 +175,7 @@ class DockingWorkflow:
         receptors = self.prepare_receptors(force=force)
         ligands = self.prepare_ligands(force=force)
         structures = self.prepare_structures(force=False)
-        vina = require_tool(self.config.tools.get("vina"), ("vina",), "AutoDock Vina")
+        vina = require_tool(self.config.tools.get("vina"), ("vina.exe", "vina"), "AutoDock Vina")
         tasks = []
         for target in self.targets:
             selected = target.ligands or tuple(ligands)
@@ -211,8 +246,8 @@ class DockingWorkflow:
 
     def plip(self, force: bool = False) -> list[Path]:
         self.summarize()
-        obabel = require_tool(self.config.tools.get("obabel"), ("obabel",), "Open Babel")
-        plip = require_tool(self.config.tools.get("plip"), ("plip",), "PLIP")
+        obabel = require_tool(self.config.tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+        plip = require_tool(self.config.tools.get("plip"), ("plip.exe", "plip"), "PLIP")
         outputs = []
         for target, ligand_name, pose, _log, _pocket in self.existing_tasks():
             output_dir = self.config.result_dir / "plip" / target.name / ligand_name
