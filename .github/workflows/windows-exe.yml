@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "src/**"
+      - "tests/**"
       - "pyproject.toml"
       - "DockFlow.spec"
       - ".github/workflows/windows-exe.yml"
@@ -50,18 +51,26 @@ jobs:
         shell: pwsh
         run: |
           @"
-          DockFlow Molecular Docking Studio
+          DockFlow Molecular Docking Studio 1.4.1
 
           Double-click DockFlow.exe to open the graphical desktop interface.
           DockFlow-CLI.exe retains command-line and automation support.
-          AutoDock Vina, Open Babel, AutoDockTools/MGLTools, and optional PLIP remain external dependencies.
-          Open Babel is used only for ligand format conversion. PDBQT generation uses AutoDockTools prepare_receptor4.py and prepare_ligand4.py.
+
+          External tools:
+          - AutoDockTools: required for receptor and ligand PDBQT generation.
+          - AutoDock Vina: required for docking.
+          - Open Babel: required only for SDF/MOL format conversion and PLIP pose conversion.
+          - PLIP: optional interaction analysis.
+
+          Use Tool Settings > Select AutoDockTools installation directory to detect AutoDockTools Python,
+          prepare_receptor4.py, and prepare_ligand4.py automatically. Tool paths are saved into the active project.
+
           Projects are stored under Documents\DockFlow\runs by default.
           "@ | Set-Content -Path dist\README-WINDOWS.txt -Encoding utf8
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: DockFlow-Windows-x64-GUI
+          name: DockFlow-1.4.1-Windows-x64
           path: |
             dist/DockFlow.exe
             dist/DockFlow-CLI.exe
