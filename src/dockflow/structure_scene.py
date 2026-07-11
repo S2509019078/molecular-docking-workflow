@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 import math
 import re
@@ -25,8 +27,11 @@ class StructureScene:
     bonds: tuple[tuple[int, int], ...]
     source_format: str
     representation: str
+    model_count: int = 1
+    model_index: int = 0
+    hidden_atom_count: int = 0
 
-    @property
+    @cached_property
     def center(self) -> tuple[float, float, float]:
         if not self.atoms:
             return (0.0, 0.0, 0.0)
@@ -37,7 +42,7 @@ class StructureScene:
             sum(atom.z for atom in self.atoms) / count,
         )
 
-    @property
+    @cached_property
     def radius(self) -> float:
         cx, cy, cz = self.center
         return max(
@@ -68,7 +73,12 @@ _COVALENT_RADII = {
 }
 
 _WATER = {"HOH", "WAT", "H2O", "DOD"}
+_COMMON_ADDITIVES = {
+    "SO4", "PO4", "GOL", "EDO", "PEG", "PG4", "PGE", "ACT", "ACY", "DMS",
+    "MES", "TRS", "HEP", "CIT", "FMT", "EOH", "IPA", "MPD", "BME", "ACE",
+}
 _TWO_LETTER = {"CL", "BR", "SI", "FE", "ZN", "MG", "MN", "CU", "NA"}
+_METALS = {"FE", "ZN", "MG", "MN", "CU", "CA", "CO", "NI"}
 
 
 def _element(value: str, atom_name: str = "", *, protein_atom: bool = False) -> str:
@@ -83,7 +93,7 @@ def _element(value: str, atom_name: str = "", *, protein_atom: bool = False) -> 
     return name[:2] if name[:2] in _TWO_LETTER else name[:1]
 
 
-def _infer_bonds(atoms: list[SceneAtom], limit: int = 500) -> list[tuple[int, int]]:
+def _infer_bonds(atoms: list[SceneAtom], limit: int = 350) -> list[tuple[int, int]]:
     if len(atoms) > limit:
         return []
     bonds: list[tuple[int, int]] = []
@@ -104,11 +114,37 @@ def _infer_bonds(atoms: list[SceneAtom], limit: int = 500) -> list[tuple[int, in
     return bonds
 
 
-def _parse_pdb(path: Path, ligand_only: bool) -> StructureScene:
+def _split_models(lines: list[str]) -> list[list[str]]:
+    models: list[list[str]] = []
+    current: list[str] = []
+    in_model = False
+    saw_model = False
+    for line in lines:
+        record = line[:6].strip().upper()
+        if record == "MODEL":
+            saw_model = True
+            if current and in_model:
+                models.append(current)
+            current = []
+            in_model = True
+            continue
+        if record == "ENDMDL":
+            if in_model:
+                models.append(current)
+                current = []
+                in_model = False
+            continue
+        if not saw_model or in_model:
+            current.append(line)
+    if current:
+        models.append(current)
+    return models or [lines]
+
+
+def _parse_pdb_atoms(lines: list[str], suffix: str) -> tuple[list[SceneAtom], dict[int, int], list[tuple[int, int]]]:
     atoms: list[SceneAtom] = []
     serial_to_index: dict[int, int] = {}
     conect: list[tuple[int, int]] = []
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for line in lines:
         record = line[:6].strip().upper()
         if record not in {"ATOM", "HETATM"}:
@@ -133,22 +169,23 @@ def _parse_pdb(path: Path, ligand_only: bool) -> StructureScene:
         residue_id = line[22:27].strip() if len(line) >= 27 else ""
         hetero = record == "HETATM"
         explicit = line[76:78].strip() if len(line) >= 78 else ""
-        if path.suffix.lower() == ".pdbqt" and not explicit:
+        if suffix == ".pdbqt" and not explicit:
             fields = line.split()
             explicit = fields[-1] if fields else ""
-        atom = SceneAtom(
-            x,
-            y,
-            z,
-            _element(explicit, name, protein_atom=not hetero),
-            name,
-            chain,
-            residue,
-            residue_id,
-            hetero,
-        )
         serial_to_index[serial] = len(atoms)
-        atoms.append(atom)
+        atoms.append(
+            SceneAtom(
+                x,
+                y,
+                z,
+                _element(explicit, name, protein_atom=not hetero),
+                name,
+                chain,
+                residue,
+                residue_id,
+                hetero,
+            )
+        )
     for line in lines:
         if not line.startswith("CONECT"):
             continue
@@ -163,25 +200,96 @@ def _parse_pdb(path: Path, ligand_only: bool) -> StructureScene:
             target = serial_to_index.get(serial)
             if source is not None and target is not None and source != target:
                 conect.append(tuple(sorted((source, target))))
+    return atoms, serial_to_index, conect
+
+
+def _sample_trace(atoms: list[SceneAtom], maximum: int = 2400) -> list[int]:
+    by_chain: dict[str, list[int]] = defaultdict(list)
+    for index, atom in enumerate(atoms):
+        if not atom.hetero and atom.name.upper() in {"CA", "P"}:
+            by_chain[atom.chain].append(index)
+    total = sum(len(indices) for indices in by_chain.values())
+    if total <= maximum:
+        return [index for indices in by_chain.values() for index in indices]
+    sampled: list[int] = []
+    for indices in by_chain.values():
+        allocation = max(2, round(maximum * len(indices) / total))
+        step = max(1, math.ceil(len(indices) / allocation))
+        selected = indices[::step]
+        if indices and selected[-1] != indices[-1]:
+            selected.append(indices[-1])
+        sampled.extend(selected)
+    return sampled[:maximum]
+
+
+def _select_hetero_groups(atoms: list[SceneAtom], maximum_atoms: int = 220) -> list[int]:
+    groups: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+    for index, atom in enumerate(atoms):
+        if atom.hetero and atom.residue not in _WATER:
+            groups[(atom.chain, atom.residue, atom.residue_id)].append(index)
+    ranked = sorted(
+        groups.items(),
+        key=lambda item: (
+            item[0][1] in _COMMON_ADDITIVES,
+            -sum(atoms[index].element.upper() != "H" for index in item[1]),
+            item[0],
+        ),
+    )
+    selected: list[int] = []
+    selected_groups = 0
+    for (_key, indices) in ranked:
+        heavy = sum(atoms[index].element.upper() != "H" for index in indices)
+        if heavy < 4 and selected_groups > 0:
+            continue
+        if selected and len(selected) + len(indices) > maximum_atoms:
+            continue
+        selected.extend(indices)
+        selected_groups += 1
+        if selected_groups >= 4 or len(selected) >= maximum_atoms:
+            break
+    if not selected:
+        for (_key, indices) in ranked[:12]:
+            selected.extend(indices[: max(0, maximum_atoms - len(selected))])
+            if len(selected) >= maximum_atoms:
+                break
+    if selected:
+        selected_atoms = [atoms[index] for index in selected]
+        for index, atom in enumerate(atoms):
+            if not atom.hetero or atom.element.upper() not in _METALS or index in selected:
+                continue
+            if any(math.dist((atom.x, atom.y, atom.z), (other.x, other.y, other.z)) <= 5.0 for other in selected_atoms):
+                selected.append(index)
+    return sorted(set(selected))
+
+
+def _parse_pdb(path: Path, ligand_only: bool, model_index: int = 0) -> StructureScene:
+    all_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    models = _split_models(all_lines)
+    selected_model = min(max(int(model_index), 0), len(models) - 1)
+    lines = models[selected_model]
+    atoms, _serial_to_index, conect = _parse_pdb_atoms(lines, path.suffix.lower())
 
     if ligand_only:
         bonds = sorted(set(conect)) or _infer_bonds(atoms)
-        return StructureScene(tuple(atoms), tuple(bonds), path.suffix.lower().lstrip("."), "ball-and-stick")
+        return StructureScene(
+            tuple(atoms),
+            tuple(bonds),
+            path.suffix.lower().lstrip("."),
+            "ball-and-stick",
+            len(models),
+            selected_model,
+            0,
+        )
 
-    selected: list[SceneAtom] = []
-    source_indices: list[int] = []
-    for index, atom in enumerate(atoms):
-        is_trace = not atom.hetero and atom.name.upper() in {"CA", "P"}
-        is_ligand = atom.hetero and atom.residue not in _WATER
-        if is_trace or is_ligand:
-            source_indices.append(index)
-            selected.append(atom)
-    if not selected:
-        selected = atoms[:2000]
-        source_indices = list(range(len(selected)))
-
+    trace_indices = _sample_trace(atoms)
+    hetero_indices = _select_hetero_groups(atoms)
+    source_indices = trace_indices + [index for index in hetero_indices if index not in set(trace_indices)]
+    if not source_indices:
+        source_indices = list(range(min(len(atoms), 1200)))
+    selected = [atoms[index] for index in source_indices]
     index_map = {source: target for target, source in enumerate(source_indices)}
     bonds: list[tuple[int, int]] = []
+
     last_by_chain: dict[str, int] = {}
     for index, atom in enumerate(selected):
         if atom.hetero:
@@ -189,22 +297,31 @@ def _parse_pdb(path: Path, ligand_only: bool) -> StructureScene:
         previous = last_by_chain.get(atom.chain)
         if previous is not None:
             other = selected[previous]
-            distance = math.dist((atom.x, atom.y, atom.z), (other.x, other.y, other.z))
-            if distance <= 5.0:
+            if math.dist((atom.x, atom.y, atom.z), (other.x, other.y, other.z)) <= 7.5:
                 bonds.append((previous, index))
         last_by_chain[atom.chain] = index
+
     for first, second in conect:
         if first in index_map and second in index_map:
             bonds.append((index_map[first], index_map[second]))
-    hetero_indices = [index for index, atom in enumerate(selected) if atom.hetero]
-    hetero_atoms = [selected[index] for index in hetero_indices]
-    for first, second in _infer_bonds(hetero_atoms):
-        bonds.append((hetero_indices[first], hetero_indices[second]))
+
+    grouped_selected: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+    for selected_index, atom in enumerate(selected):
+        if atom.hetero:
+            grouped_selected[(atom.chain, atom.residue, atom.residue_id)].append(selected_index)
+    for indices in grouped_selected.values():
+        group_atoms = [selected[index] for index in indices]
+        for first, second in _infer_bonds(group_atoms):
+            bonds.append((indices[first], indices[second]))
+
     return StructureScene(
         tuple(selected),
         tuple(sorted(set(tuple(sorted(bond)) for bond in bonds))),
         path.suffix.lower().lstrip("."),
-        "backbone-and-ligand",
+        "protein-trace",
+        len(models),
+        selected_model,
+        max(0, len(atoms) - len(selected)),
     )
 
 
@@ -280,13 +397,13 @@ def _parse_mol(path: Path) -> StructureScene:
     return StructureScene(tuple(atoms), tuple(sorted(set(bonds)) or _infer_bonds(atoms)), path.suffix.lower().lstrip("."), "ball-and-stick")
 
 
-def load_structure_scene(path: Path, *, ligand_only: bool = False) -> StructureScene:
+def load_structure_scene(path: Path, *, ligand_only: bool = False, model_index: int = 0) -> StructureScene:
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
     suffix = path.suffix.lower()
     if suffix in {".pdb", ".pdbqt"}:
-        scene = _parse_pdb(path, ligand_only)
+        scene = _parse_pdb(path, ligand_only, model_index=model_index)
     elif suffix == ".mol2":
         scene = _parse_mol2(path)
     elif suffix in {".mol", ".sdf"}:
