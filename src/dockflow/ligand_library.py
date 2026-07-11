@@ -36,19 +36,26 @@ def inspect_ligand_file(path: Path, source: str = "local") -> LigandRecord:
     if path.stat().st_size == 0:
         raise ValueError(f"配体文件为空: {path.name}")
 
-    warning = ""
+    warnings = []
     text = path.read_text(encoding="utf-8", errors="replace")
     if suffix == ".sdf":
         molecule_count = text.count("$$$$")
         if molecule_count > 1:
-            warning = f"包含 {molecule_count} 个分子；当前流程会把整个文件视为一个输入，请先拆分"
+            warnings.append(f"包含 {molecule_count} 个分子；请先拆分为单分子文件")
     elif suffix in {".smi", ".smiles"}:
         lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
         if len(lines) > 1:
-            warning = f"包含 {len(lines)} 条 SMILES；建议拆分为单分子文件"
+            warnings.append(f"包含 {len(lines)} 条SMILES；请拆分为单分子文件")
         if lines and "." in lines[0].split()[0]:
-            warning = (warning + "；" if warning else "") + "SMILES 含多个片段，可能是盐或复合物"
+            warnings.append("SMILES含多个片段，可能是盐或复合物")
+        warnings.append("SMILES没有经确认的三维坐标，不能直接进入正式AutoDockTools预处理")
+    elif suffix == ".pdbqt":
+        warnings.append("已是PDBQT，将按原样使用；请确认原子类型、Gasteiger电荷和可旋转键定义正确")
 
+    if suffix in {".sdf", ".mol", ".mol2", ".pdb"}:
+        warnings.append("请确认导入结构的正式电荷、质子化状态和三维构象符合实验条件")
+
+    warning = "；".join(warnings)
     return LigandRecord(
         name=safe_ligand_name(path.stem),
         source=source,
@@ -62,9 +69,9 @@ def inspect_ligand_file(path: Path, source: str = "local") -> LigandRecord:
 def create_smiles_file(directory: Path, name: str, smiles: str) -> LigandRecord:
     smiles = smiles.strip()
     if not smiles:
-        raise ValueError("SMILES 不能为空")
+        raise ValueError("SMILES不能为空")
     if any(character.isspace() for character in smiles):
-        raise ValueError("请输入单个 SMILES，不要包含空格或附加字段")
+        raise ValueError("请输入单个SMILES，不要包含空格或附加字段")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{safe_ligand_name(name)}.smi"
@@ -83,14 +90,14 @@ def _pubchem_property(identifier: str) -> dict:
         payload = json.loads(response.read().decode("utf-8"))
     properties = payload.get("PropertyTable", {}).get("Properties", [])
     if not properties:
-        raise ValueError(f"PubChem 未找到化合物: {identifier}")
+        raise ValueError(f"PubChem未找到化合物: {identifier}")
     return properties[0]
 
 
 def download_pubchem_sdf(directory: Path, identifier: str) -> tuple[LigandRecord, dict]:
     identifier = identifier.strip()
     if not identifier:
-        raise ValueError("请输入 PubChem CID 或化合物名称")
+        raise ValueError("请输入PubChem CID或化合物名称")
     properties = _pubchem_property(identifier)
     cid = str(properties.get("CID", identifier))
     title = properties.get("Title") or identifier
@@ -105,7 +112,7 @@ def download_pubchem_sdf(directory: Path, identifier: str) -> tuple[LigandRecord
         with urlopen(Request(fallback, headers={"User-Agent": "DockFlow/1.2"}), timeout=60) as response:
             content = response.read()
     if not content:
-        raise ValueError(f"PubChem 返回空结构: {identifier}")
+        raise ValueError(f"PubChem返回空结构: {identifier}")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{safe_ligand_name(title)}_CID{cid}.sdf"
