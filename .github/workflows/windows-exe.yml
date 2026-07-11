@@ -41,10 +41,10 @@ jobs:
         shell: pwsh
         run: |
           Remove-Item "$env:TEMP\DockFlow-gui-error.txt" -ErrorAction SilentlyContinue
-          .\dist\DockFlow.exe --gui-smoke-test
-          if ($LASTEXITCODE -ne 0) {
+          $process = Start-Process -FilePath ".\dist\DockFlow.exe" -ArgumentList "--gui-smoke-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
             if (Test-Path "$env:TEMP\DockFlow-gui-error.txt") { Get-Content "$env:TEMP\DockFlow-gui-error.txt" }
-            throw "DockFlow GUI returned $LASTEXITCODE"
+            throw "DockFlow GUI returned $($process.ExitCode)"
           }
       - name: Write package notes
         shell: pwsh
