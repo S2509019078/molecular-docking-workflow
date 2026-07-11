@@ -3,11 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QEvent, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
-    QDockWidget,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from .gui import APP_STYLE
 from .gui_viewers import DockFlowViewerWindow
+from .ligand_library import SUPPORTED_LIGAND_SUFFIXES, inspect_ligand_file
 from .structure_preview import build_structure_preview
 
 try:
@@ -35,9 +35,13 @@ QPushButton#NavButton:checked { background: #2563eb; color: #ffffff; }
 QPushButton#NavButton:disabled { color: #94a3b8; background: #172033; }
 QMenuBar { background: #ffffff; color: #172033; border-bottom: 1px solid #dbe3ef; }
 QMenuBar::item:selected { background: #dbeafe; color: #1d4ed8; }
-QDockWidget { color: #111827; font-weight: 600; }
+QTabWidget#InlinePreview { background: white; border: 1px solid #cbd5e1; border-radius: 8px; }
 QTabBar::tab { background: #e8edf5; color: #334155; padding: 8px 14px; }
 QTabBar::tab:selected { background: #2563eb; color: white; }
+QListWidget#LigandDropZone { border: 2px dashed #94a3b8; background: #fbfdff; }
+QListWidget#LigandDropZone:hover { border-color: #2563eb; background: #eff6ff; }
+QLineEdit#PdbDropZone { border: 2px dashed #94a3b8; background: #fbfdff; }
+QLineEdit#PdbDropZone:focus { border-color: #2563eb; background: #ffffff; }
 """
 
 
@@ -55,6 +59,7 @@ class PreviewPane(QWidget):
         else:
             self.web = None
             self.fallback = QLabel("当前安装包未包含 Qt WebEngine。可点击下方按钮在浏览器中查看结构。")
+            self.fallback.setAlignment(Qt.AlignCenter)
             self.fallback.setWordWrap(True)
             self.fallback.setStyleSheet("padding:24px;color:#64748b;background:white;")
             layout.addWidget(self.fallback, 1)
@@ -77,9 +82,10 @@ class PreviewPane(QWidget):
 class DockFlowPreviewWindow(DockFlowViewerWindow):
     def __init__(self, runs_dir: Path):
         super().__init__(runs_dir)
-        self.setWindowTitle("DockFlow — Molecular Docking Studio 0.9")
-        self._build_preview_dock()
+        self.setWindowTitle("DockFlow — Molecular Docking Studio 1.0")
+        self._build_inline_preview()
         self._build_preview_menu()
+        self._configure_drag_drop()
         self._fix_sidebar_text()
 
     def _fix_sidebar_text(self):
@@ -88,44 +94,112 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
             button.setText(text)
             button.setEnabled(True)
         for label in self.findChildren(QLabel):
-            if "Preview 0.2" in label.text():
-                label.setText("DockFlow 0.9 · Windows x64")
+            if "Preview 0.2" in label.text() or "DockFlow 0.9" in label.text():
+                label.setText("DockFlow 1.0 · Windows x64")
                 label.setStyleSheet("color:#cbd5e1;padding:8px 12px;")
 
-    def _build_preview_dock(self):
-        self.preview_dock = QDockWidget("结构预览", self)
-        self.preview_dock.setObjectName("StructurePreviewDock")
-        self.preview_tabs = QTabWidget()
+    def _build_inline_preview(self):
+        self.preview_tabs = QTabWidget(objectName="InlinePreview")
+        self.preview_tabs.setMinimumHeight(300)
         self.receptor_preview = PreviewPane("受体结构")
         self.ligand_preview = PreviewPane("原始配体")
         self.prepared_preview = PreviewPane("预处理后配体")
-        self.preview_tabs.addTab(self.receptor_preview, "受体")
+        self.preview_tabs.addTab(self.receptor_preview, "受体结构")
         self.preview_tabs.addTab(self.ligand_preview, "原始配体")
         self.preview_tabs.addTab(self.prepared_preview, "预处理后")
-        self.preview_dock.setWidget(self.preview_tabs)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.preview_dock)
-        self.preview_dock.resize(480, 650)
+
+        self.chain_list.setMaximumHeight(72)
+        parent_layout = self.chain_list.parentWidget().layout()
+        index = parent_layout.indexOf(self.chain_list)
+        parent_layout.insertWidget(index + 1, self.preview_tabs, 1)
 
     def _build_preview_menu(self):
         menu = self.menuBar().addMenu("结构预览")
-        show_action = QAction("显示/隐藏预览面板", self)
-        show_action.setCheckable(True)
-        show_action.setChecked(True)
-        show_action.toggled.connect(self.preview_dock.setVisible)
         receptor_action = QAction("刷新受体预览", self)
         receptor_action.triggered.connect(self._preview_current_receptor)
-        ligand_action = QAction("刷新配体预览", self)
-        ligand_action.triggered.connect(self._preview_first_ligand)
+        ligand_action = QAction("刷新原始配体", self)
+        ligand_action.triggered.connect(self._preview_selected_ligand)
         prepared_action = QAction("刷新预处理后配体", self)
         prepared_action.triggered.connect(self._preview_prepared_ligand)
-        menu.addActions([show_action, receptor_action, ligand_action, prepared_action])
+        menu.addActions([receptor_action, ligand_action, prepared_action])
+
+    def _configure_drag_drop(self):
+        self.structure_input.setObjectName("PdbDropZone")
+        self.structure_input.setAcceptDrops(True)
+        self.structure_input.installEventFilter(self)
+        self.structure_input.setToolTip("可输入4位 PDB ID，也可将 .pdb 文件直接拖到此处")
+
+        self.ligand_files.setObjectName("LigandDropZone")
+        self.ligand_files.setAcceptDrops(True)
+        self.ligand_files.installEventFilter(self)
+        self.ligand_files.setToolTip("可拖入 SDF、MOL2、MOL、PDB、PDBQT、SMI 或 SMILES 文件")
+        self.ligand_files.currentRowChanged.connect(lambda _row: self._preview_selected_ligand())
+
+    def eventFilter(self, watched, event):
+        if watched in {self.structure_input, self.ligand_files}:
+            if event.type() == QEvent.DragEnter:
+                paths = self._drop_paths(event.mimeData())
+                accepted = self._valid_pdb_drop(paths) if watched is self.structure_input else self._valid_ligand_drop(paths)
+                if accepted:
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Drop:
+                paths = self._drop_paths(event.mimeData())
+                if watched is self.structure_input and self._valid_pdb_drop(paths):
+                    self.structure_input.setText(str(paths[0]))
+                    event.acceptProposedAction()
+                    self._analyze_structure()
+                    return True
+                if watched is self.ligand_files and self._valid_ligand_drop(paths):
+                    self._add_dropped_ligands(paths)
+                    event.acceptProposedAction()
+                    return True
+        return super().eventFilter(watched, event)
+
+    @staticmethod
+    def _drop_paths(mime_data) -> list[Path]:
+        if not mime_data.hasUrls():
+            return []
+        return [Path(url.toLocalFile()) for url in mime_data.urls() if url.isLocalFile()]
+
+    @staticmethod
+    def _valid_pdb_drop(paths: list[Path]) -> bool:
+        return len(paths) == 1 and paths[0].is_file() and paths[0].suffix.lower() == ".pdb"
+
+    @staticmethod
+    def _valid_ligand_drop(paths: list[Path]) -> bool:
+        return bool(paths) and all(path.is_file() and path.suffix.lower() in SUPPORTED_LIGAND_SUFFIXES for path in paths)
+
+    def _add_dropped_ligands(self, paths: list[Path]):
+        errors = []
+        existing = {record.path.name.lower() for record in self.ligand_records}
+        for path in paths:
+            try:
+                record = inspect_ligand_file(path)
+                if record.path.name.lower() in existing:
+                    continue
+                self.ligand_records.append(record)
+                existing.add(record.path.name.lower())
+            except Exception as error:
+                errors.append(f"{path.name}: {error}")
+        self._refresh_ligand_list()
+        if self.ligand_files.count():
+            self.ligand_files.setCurrentRow(self.ligand_files.count() - 1)
+        self._preview_selected_ligand()
+        self.statusBar().showMessage(f"已拖入 {len(paths) - len(errors)} 个配体", 5000)
+        if errors:
+            QMessageBox.warning(self, "部分配体未加入", "\n".join(errors))
 
     def _preview_file(self, path: Path, pane: PreviewPane, title: str, ligand_only: bool):
         try:
             cache = Path(tempfile.gettempdir()) / "DockFlow" / "preview"
-            html = build_structure_preview(path, cache / f"{path.stem}_{'ligand' if ligand_only else 'receptor'}.html", title=title, ligand_only=ligand_only)
+            html = build_structure_preview(
+                path,
+                cache / f"{path.stem}_{'ligand' if ligand_only else 'receptor'}.html",
+                title=title,
+                ligand_only=ligand_only,
+            )
             pane.load(html)
-            self.preview_dock.show()
         except Exception as error:
             QMessageBox.warning(self, "结构预览失败", str(error))
 
@@ -137,20 +211,27 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
 
     def _add_ligands(self):
         super()._add_ligands()
-        self._preview_first_ligand()
+        if self.ligand_files.count() and self.ligand_files.currentRow() < 0:
+            self.ligand_files.setCurrentRow(0)
+        self._preview_selected_ligand()
 
     def _preview_current_receptor(self):
         if self.current_pdb and self.current_pdb.exists():
             self._preview_file(self.current_pdb, self.receptor_preview, f"受体：{self.current_pdb.name}", False)
+            self.preview_tabs.setCurrentWidget(self.receptor_preview)
         else:
-            QMessageBox.information(self, "尚无受体", "请先输入 PDB ID 或选择本地 PDB，并执行结构分析。")
+            QMessageBox.information(self, "尚无受体", "请拖入 PDB 文件，或输入 PDB ID 后执行结构分析。")
 
-    def _preview_first_ligand(self):
+    def _preview_selected_ligand(self):
         records = getattr(self, "ligand_records", [])
-        if records:
-            record = records[0]
-            self._preview_file(record.path, self.ligand_preview, f"原始配体：{record.name}", True)
-            self.preview_tabs.setCurrentWidget(self.ligand_preview)
+        if not records:
+            return
+        row = self.ligand_files.currentRow()
+        if row < 0 or row >= len(records):
+            row = 0
+        record = records[row]
+        self._preview_file(record.path, self.ligand_preview, f"原始配体：{record.name}", True)
+        self.preview_tabs.setCurrentWidget(self.ligand_preview)
 
     def _preview_prepared_ligand(self):
         if not self.current_config:
@@ -161,7 +242,9 @@ class DockFlowPreviewWindow(DockFlowViewerWindow):
         if not candidates:
             QMessageBox.information(self, "尚未预处理", "当前项目还没有生成预处理后的配体 PDB。请先运行配体准备或完整对接。")
             return
-        path = candidates[0]
+        row = self.ligand_files.currentRow()
+        selected_name = self.ligand_records[row].name if self.ligand_records and 0 <= row < len(self.ligand_records) else ""
+        path = next((candidate for candidate in candidates if candidate.stem == selected_name), candidates[0])
         self._preview_file(path, self.prepared_preview, f"预处理后配体：{path.stem}", True)
         self.preview_tabs.setCurrentWidget(self.prepared_preview)
 
@@ -181,7 +264,7 @@ def run_gui(runs_dir: Path, smoke_test: bool = False) -> int:
         window.show()
         app.processEvents()
         window.close()
-        print("DockFlow GUI embedded previews OK")
+        print("DockFlow GUI drag-drop inline preview OK")
         return 0
     window.show()
     return app.exec()
