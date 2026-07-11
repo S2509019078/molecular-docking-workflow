@@ -3,16 +3,26 @@ import argparse
 
 from .config import WorkflowConfig
 from .pipeline import DockingWorkflow
+from .pose_analysis import index_project_poses, run_plip_for_pose
 from .wizard import interactive_wizard
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="dockflow", description="可复用 AutoDock/Vina 分子对接流程")
-    parser.add_argument("command", choices=["wizard", "check", "pockets", "prepare-receptors", "prepare-ligands", "dock", "summarize", "plip", "all", "status"])
+    parser.add_argument(
+        "command",
+        choices=[
+            "wizard", "check", "pockets", "prepare-receptors", "prepare-ligands",
+            "dock", "summarize", "index-poses", "plip", "plip-pose", "all", "status",
+        ],
+    )
     parser.add_argument("--config", type=Path, default=Path("config/config.yaml"))
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"), help="wizard 创建独立运行目录的位置")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--with-plip", action="store_true")
+    parser.add_argument("--target", default="")
+    parser.add_argument("--ligand", default="")
+    parser.add_argument("--pose-rank", type=int, default=1)
     args = parser.parse_args(argv)
 
     if args.command == "wizard":
@@ -45,15 +55,27 @@ def main(argv=None):
         return 0
     if args.command == "dock":
         workflow.dock(force=args.force)
+        index_project_poses(args.config)
         return 0
     if args.command == "summarize":
         print(workflow.summarize())
+        index_project_poses(args.config)
+        return 0
+    if args.command == "index-poses":
+        records = index_project_poses(args.config)
+        print(f"indexed {len(records)} poses")
         return 0
     if args.command == "plip":
         workflow.plip(force=args.force)
         return 0
+    if args.command == "plip-pose":
+        if not args.target or not args.ligand:
+            parser.error("plip-pose requires --target and --ligand")
+        print(run_plip_for_pose(args.config, args.target, args.ligand, args.pose_rank, force=args.force))
+        return 0
     if args.command == "all":
         print(workflow.run_all(force=args.force, with_plip=args.with_plip))
+        index_project_poses(args.config)
         return 0
 
     return 1
