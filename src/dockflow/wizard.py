@@ -64,15 +64,18 @@ def create_run_directory(base: Path, project_name: str, now: datetime | None = N
     return run_dir
 
 
-def write_project(run_dir: Path, target_row: dict, tools: dict | None = None) -> Path:
+def write_project(run_dir: Path, target_row: dict, tools: dict | None = None, settings: dict | None = None) -> Path:
     target_path = run_dir / "config" / "targets.tsv"
     with target_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=TARGET_COLUMNS, delimiter="\t")
         writer.writeheader()
         writer.writerow({key: target_row.get(key, "") for key in TARGET_COLUMNS})
+    default_settings = {"box_padding_angstrom": 4.0, "exhaustiveness": 8, "num_modes": 9, "energy_range": 3, "cpu": 1, "energy_threshold": -8.0, "distance_threshold_angstrom": 5.0}
+    if settings:
+        default_settings.update(settings)
     config = {
         "tools": tools or {"mgltools_pythonsh": "pythonsh", "prepare_receptor4": "prepare_receptor4.py", "prepare_ligand4": "prepare_ligand4.py", "obabel": "obabel", "vina": "vina", "plip": "plip"},
-        "settings": {"box_padding_angstrom": 4.0, "exhaustiveness": 8, "num_modes": 9, "energy_range": 3, "cpu": 1, "energy_threshold": -8.0, "distance_threshold_angstrom": 5.0},
+        "settings": default_settings,
         "paths": {"targets": "config/targets.tsv", "ligands": "inputs/ligands", "work": "work", "results": "results"},
     }
     config_path = run_dir / "config" / "config.yaml"
