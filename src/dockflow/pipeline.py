@@ -17,6 +17,7 @@ from .receptor_plan import (
 from .scientific_qc import ProjectQC, build_project_qc, write_project_qc
 from .state import StateStore, outputs_are_complete
 from .structures import acquire_structure, extract_reference_ligand, read_atoms
+from .tooling import SPEC_BY_KEY, discover_tools
 
 
 class DockingWorkflow:
@@ -47,26 +48,33 @@ class DockingWorkflow:
         for path, label in ((self.config.target_table, "target table"), (self.config.ligand_dir, "ligand directory")):
             if not path.exists():
                 problems.append(f"missing {label}: {path}")
-        checks = [
-            ("obabel", ("obabel.exe", "obabel"), "Open Babel"),
-            ("vina", ("vina.exe", "vina"), "AutoDock Vina"),
-        ]
+
+        try:
+            ligands = discover_ligands(self.config.ligand_dir) if self.config.ligand_dir.exists() else {}
+        except (ValueError, FileNotFoundError) as error:
+            problems.append(str(error))
+            ligands = {}
+
+        resolved = discover_tools(self.config.tools)
+        required_keys = {
+            "mgltools_pythonsh",
+            "prepare_receptor4",
+            "prepare_ligand4",
+            "vina",
+        }
+        if any(path.suffix.lower() in {".sdf", ".mol"} for path in ligands.values()):
+            required_keys.add("obabel")
         if require_plip:
-            checks.append(("plip", ("plip.exe", "plip"), "PLIP"))
-        for key, candidates, label in checks:
-            try:
-                require_tool(self.config.tools.get(key), candidates, label)
-            except FileNotFoundError as error:
-                problems.append(str(error))
+            required_keys.update({"plip", "obabel"})
+
+        for key in sorted(required_keys):
+            if resolved.get(key) is None:
+                problems.append(f"required tool not found: {SPEC_BY_KEY[key].label}")
+
         try:
             self.preparation_backend()
         except (FileNotFoundError, ValueError) as error:
             problems.append(str(error))
-        if self.config.ligand_dir.exists():
-            try:
-                discover_ligands(self.config.ligand_dir)
-            except (ValueError, FileNotFoundError) as error:
-                problems.append(str(error))
         return problems
 
     def _receptor_plan_settings(self) -> dict:

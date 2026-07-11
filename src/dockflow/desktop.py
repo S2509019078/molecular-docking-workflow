@@ -6,7 +6,7 @@ import csv
 import shutil
 import sys
 
-from .commands import discover_tool
+from .tooling import TOOL_SPECS, discover_tools
 from .wizard import create_run_directory, detect_hetero_residues, safe_name, write_project
 
 
@@ -31,19 +31,11 @@ def inspect_structure(pdb_path: Path) -> StructureInspection:
 
 
 def default_tools() -> dict[str, str]:
-    specs = {
-        "mgltools_pythonsh": ("pythonsh.exe", "pythonsh"),
-        "prepare_receptor4": ("prepare_receptor4.py",),
-        "prepare_ligand4": ("prepare_ligand4.py",),
-        "obabel": ("obabel.exe", "obabel"),
-        "vina": ("vina.exe", "vina"),
-        "plip": ("plip.exe", "plip"),
+    resolved = discover_tools()
+    return {
+        spec.key: str(resolved.get(spec.key) or spec.candidates[0])
+        for spec in TOOL_SPECS
     }
-    resolved = {}
-    for key, candidates in specs.items():
-        match = discover_tool(None, candidates)
-        resolved[key] = str(match) if match else candidates[0]
-    return resolved
 
 
 def create_gui_project(
