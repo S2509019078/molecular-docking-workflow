@@ -6,7 +6,6 @@ from pathlib import Path
 from .commands import discover_tool
 from .config import WorkflowConfig
 from .desktop import load_summary
-from .preparation import resolve_preparation_backend
 
 
 @dataclass(frozen=True)
@@ -25,33 +24,21 @@ class ToolDiagnostic:
 
 TOOL_SPECS = {
     "vina": ("AutoDock Vina", ("vina.exe", "vina"), True, "安装 AutoDock Vina，并选择 vina.exe"),
-    "obabel": ("Open Babel", ("obabel.exe", "obabel"), True, "安装 Open Babel 3，用于三维化、补氢和格式转换"),
-    "meeko_receptor": ("Meeko receptor helper", ("DockFlow-Meeko-Receptor.exe", "mk_prepare_receptor.py", "mk_prepare_receptor"), False, "新版安装包应自带 DockFlow-Meeko-Receptor.exe"),
-    "meeko_ligand": ("Meeko ligand helper", ("DockFlow-Meeko-Ligand.exe", "mk_prepare_ligand.py", "mk_prepare_ligand"), False, "新版安装包应自带 DockFlow-Meeko-Ligand.exe"),
-    "mgltools_pythonsh": ("MGLTools pythonsh", ("pythonsh.exe", "pythonsh"), False, "可选；仅经典 AutoDockTools 后端需要"),
-    "prepare_receptor4": ("prepare_receptor4.py", ("prepare_receptor4.py",), False, "可选；仅经典 AutoDockTools 后端需要"),
-    "prepare_ligand4": ("prepare_ligand4.py", ("prepare_ligand4.py",), False, "可选；仅经典 AutoDockTools 后端需要"),
-    "plip": ("PLIP", ("plip.exe", "plip"), False, "仅在需要相互作用分析时安装 PLIP"),
+    "obabel": ("Open Babel", ("obabel.exe", "obabel"), True, "安装 Open Babel 3；DockFlow仅用它做SDF/MOL到MOL2的格式转换"),
+    "mgltools_pythonsh": ("MGLTools pythonsh", ("pythonsh.exe", "pythonsh"), True, "安装AutoDockTools/MGLTools，并选择pythonsh.exe"),
+    "prepare_receptor4": ("prepare_receptor4.py", ("prepare_receptor4.py",), True, "AutoDockTools受体PDBQT准备脚本，必须配置"),
+    "prepare_ligand4": ("prepare_ligand4.py", ("prepare_ligand4.py",), True, "AutoDockTools配体PDBQT准备脚本，必须配置"),
+    "plip": ("PLIP", ("plip.exe", "plip"), False, "仅在需要相互作用分析时安装PLIP"),
 }
 
 
 def diagnose_tools(config_path: Path) -> list[ToolDiagnostic]:
     config = WorkflowConfig.from_yaml(Path(config_path))
-    requested = str(config.settings.get("preparation_backend", "auto"))
-    try:
-        backend = resolve_preparation_backend(config.tools, requested)
-    except Exception:
-        backend = requested.lower()
     rows = []
     for key, (label, candidates, required, hint) in TOOL_SPECS.items():
         configured = str(config.tools.get(key, "") or "")
         resolved = discover_tool(configured or None, candidates)
-        effective_required = required
-        if backend == "meeko" and key in {"meeko_receptor", "meeko_ligand"}:
-            effective_required = True
-        if backend == "mgltools" and key in {"mgltools_pythonsh", "prepare_receptor4", "prepare_ligand4"}:
-            effective_required = True
-        rows.append(ToolDiagnostic(key, label, configured, resolved, effective_required, hint))
+        rows.append(ToolDiagnostic(key, label, configured, resolved, required, hint))
     return rows
 
 
