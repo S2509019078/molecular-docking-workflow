@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QProcess, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QDoubleSpinBox,
@@ -79,7 +80,7 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
         row.addWidget(export)
         layout.insertWidget(3, toolbar)
         self.result_table.setSortingEnabled(True)
-        self.result_table.setSelectionBehavior(self.result_table.SelectRows)
+        self.result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
 
     def _refresh_results(self):
         self.all_result_rows = []
