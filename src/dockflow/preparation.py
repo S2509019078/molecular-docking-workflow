@@ -3,9 +3,10 @@ import os
 import re
 import shutil
 
-from .commands import require_tool, run_command
+from .commands import discover_tool, require_tool, run_command
 
 SUPPORTED_LIGAND_EXTENSIONS = {".sdf", ".mol2", ".mol", ".pdb", ".smi", ".smiles", ".pdbqt"}
+SUPPORTED_PREPARATION_BACKENDS = {"auto", "mgltools", "openbabel"}
 
 
 def safe_name(value: str) -> str:
@@ -29,14 +30,66 @@ def discover_ligands(directory: Path) -> dict[str, Path]:
     return result
 
 
-def prepare_receptor(clean_pdb: Path, output_pdbqt: Path, tools: dict, log_path: Path) -> Path:
-    pythonsh = require_tool(tools.get("mgltools_pythonsh"), ("pythonsh",), "MGLTools pythonsh")
-    script = require_tool(tools.get("prepare_receptor4"), (), "prepare_receptor4.py")
+def _mgltools_paths(tools: dict) -> tuple[Path | None, Path | None, Path | None]:
+    pythonsh = discover_tool(tools.get("mgltools_pythonsh"), ("pythonsh.exe", "pythonsh"))
+    receptor_script = discover_tool(tools.get("prepare_receptor4"), ("prepare_receptor4.py",))
+    ligand_script = discover_tool(tools.get("prepare_ligand4"), ("prepare_ligand4.py",))
+    return pythonsh, receptor_script, ligand_script
+
+
+def resolve_preparation_backend(tools: dict, requested: str | None = None) -> str:
+    backend = (requested or "auto").strip().lower()
+    if backend not in SUPPORTED_PREPARATION_BACKENDS:
+        raise ValueError(f"unsupported preparation backend: {backend}")
+    if backend == "mgltools":
+        if not all(_mgltools_paths(tools)):
+            raise FileNotFoundError("MGLTools backend selected, but pythonsh/prepare_receptor4.py/prepare_ligand4.py is incomplete")
+        return "mgltools"
+    if backend == "openbabel":
+        require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+        return "openbabel"
+    if all(_mgltools_paths(tools)):
+        return "mgltools"
+    require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+    return "openbabel"
+
+
+def preparation_backend_warning(tools: dict, requested: str | None = None) -> str | None:
+    backend = resolve_preparation_backend(tools, requested)
+    if backend == "openbabel" and (requested or "auto").strip().lower() == "auto":
+        return "未检测到完整 MGLTools，将自动使用 Open Babel 生成 PDBQT；建议在正式发表前复核质子化与原子类型"
+    return None
+
+
+def _check_output(output: Path, result, label: str, log_path: Path) -> Path:
+    if result.returncode != 0 or not output.exists() or output.stat().st_size == 0:
+        raise RuntimeError(f"{label} failed; see {log_path}")
+    return output
+
+
+def prepare_receptor(
+    clean_pdb: Path,
+    output_pdbqt: Path,
+    tools: dict,
+    log_path: Path,
+    settings: dict | None = None,
+) -> Path:
+    settings = settings or {}
+    backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
-    result = run_command([str(pythonsh), str(script), "-r", str(clean_pdb), "-o", str(output_pdbqt), "-A", "hydrogens", "-U", "nphs_lps_waters"], log_path)
-    if result.returncode != 0 or not output_pdbqt.exists() or output_pdbqt.stat().st_size == 0:
-        raise RuntimeError(f"prepare_receptor4 failed; see {log_path}")
-    return output_pdbqt
+    if backend == "mgltools":
+        pythonsh, script, _ = _mgltools_paths(tools)
+        command = [str(pythonsh), str(script), "-r", str(clean_pdb), "-o", str(output_pdbqt), "-A", "hydrogens", "-U", "nphs_lps_waters"]
+        result = run_command(command, log_path)
+        return _check_output(output_pdbqt, result, "prepare_receptor4", log_path)
+
+    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+    receptor_ph = settings.get("receptor_protonation_ph", 7.4)
+    command = [str(obabel), str(clean_pdb), "-O", str(output_pdbqt), "-xr", "-xh"]
+    if receptor_ph is not None:
+        command.extend(["-p", f"{float(receptor_ph):g}"])
+    result = run_command(command, log_path)
+    return _check_output(output_pdbqt, result, "Open Babel receptor preparation", log_path)
 
 
 def convert_ligand_to_pdb(
@@ -51,7 +104,7 @@ def convert_ligand_to_pdb(
     minimization_steps: int = 250,
 ) -> Path:
     output_pdb.parent.mkdir(parents=True, exist_ok=True)
-    obabel = require_tool(tools.get("obabel"), ("obabel",), "Open Babel")
+    obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
     command = [str(obabel), str(source), "-O", str(output_pdb)]
     if source.suffix.lower() in {".smi", ".smiles"}:
         command.append("--gen3d")
@@ -60,9 +113,7 @@ def convert_ligand_to_pdb(
     if minimize:
         command.extend(["--minimize", "--ff", str(forcefield), "--steps", str(int(minimization_steps))])
     result = run_command(command, log_path)
-    if result.returncode != 0 or not output_pdb.exists() or output_pdb.stat().st_size == 0:
-        raise RuntimeError(f"Open Babel conversion failed; see {log_path}")
-    return output_pdb
+    return _check_output(output_pdb, result, "Open Babel conversion", log_path)
 
 
 def _env_settings() -> dict:
@@ -72,6 +123,7 @@ def _env_settings() -> dict:
         "ligand_minimize": os.environ.get("DOCKFLOW_LIGAND_MINIMIZE", "1").strip().lower() not in {"0", "false", "no", "off"},
         "ligand_forcefield": os.environ.get("DOCKFLOW_LIGAND_FORCEFIELD", "MMFF94"),
         "ligand_minimization_steps": int(os.environ.get("DOCKFLOW_LIGAND_STEPS", "250")),
+        "preparation_backend": os.environ.get("DOCKFLOW_PREPARATION_BACKEND", "auto"),
     }
 
 
@@ -90,6 +142,7 @@ def prepare_ligand(
     if source.suffix.lower() == ".pdbqt":
         shutil.copyfile(source, output_pdbqt)
         return output_pdbqt
+
     output_pdb = pdb_dir / f"{ligand_name}.pdb"
     convert_ligand_to_pdb(
         source,
@@ -101,10 +154,14 @@ def prepare_ligand(
         forcefield=str(settings.get("ligand_forcefield", "MMFF94")),
         minimization_steps=int(settings.get("ligand_minimization_steps", 250)),
     )
-    pythonsh = require_tool(tools.get("mgltools_pythonsh"), ("pythonsh",), "MGLTools pythonsh")
-    script = require_tool(tools.get("prepare_ligand4"), (), "prepare_ligand4.py")
+
+    backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
     prepare_log = log_dir / f"{ligand_name}_prepare.log"
-    result = run_command([str(pythonsh), str(script), "-l", str(output_pdb), "-o", str(output_pdbqt), "-A", "hydrogens"], prepare_log)
-    if result.returncode != 0 or not output_pdbqt.exists() or output_pdbqt.stat().st_size == 0:
-        raise RuntimeError(f"prepare_ligand4 failed; see {prepare_log}")
-    return output_pdbqt
+    if backend == "mgltools":
+        pythonsh, _, script = _mgltools_paths(tools)
+        command = [str(pythonsh), str(script), "-l", str(output_pdb), "-o", str(output_pdbqt), "-A", "hydrogens"]
+    else:
+        obabel = require_tool(tools.get("obabel"), ("obabel.exe", "obabel"), "Open Babel")
+        command = [str(obabel), str(output_pdb), "-O", str(output_pdbqt), "-xh"]
+    result = run_command(command, prepare_log)
+    return _check_output(output_pdbqt, result, f"{backend} ligand preparation", prepare_log)
