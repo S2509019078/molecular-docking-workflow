@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import re
 import shutil
 
@@ -38,29 +39,68 @@ def prepare_receptor(clean_pdb: Path, output_pdbqt: Path, tools: dict, log_path:
     return output_pdbqt
 
 
-def convert_ligand_to_pdb(source: Path, output_pdb: Path, tools: dict, log_path: Path) -> Path:
+def convert_ligand_to_pdb(
+    source: Path,
+    output_pdb: Path,
+    tools: dict,
+    log_path: Path,
+    *,
+    protonation_ph: float | None = 7.4,
+    minimize: bool = True,
+    forcefield: str = "MMFF94",
+    minimization_steps: int = 250,
+) -> Path:
     output_pdb.parent.mkdir(parents=True, exist_ok=True)
-    if source.suffix.lower() == ".pdb":
-        shutil.copyfile(source, output_pdb)
-        return output_pdb
     obabel = require_tool(tools.get("obabel"), ("obabel",), "Open Babel")
     command = [str(obabel), str(source), "-O", str(output_pdb)]
     if source.suffix.lower() in {".smi", ".smiles"}:
         command.append("--gen3d")
+    if protonation_ph is not None:
+        command.extend(["-p", f"{float(protonation_ph):g}"])
+    if minimize:
+        command.extend(["--minimize", "--ff", str(forcefield), "--steps", str(int(minimization_steps))])
     result = run_command(command, log_path)
     if result.returncode != 0 or not output_pdb.exists() or output_pdb.stat().st_size == 0:
         raise RuntimeError(f"Open Babel conversion failed; see {log_path}")
     return output_pdb
 
 
-def prepare_ligand(source: Path, ligand_name: str, pdb_dir: Path, pdbqt_dir: Path, tools: dict, log_dir: Path) -> Path:
+def _env_settings() -> dict:
+    ph_value = os.environ.get("DOCKFLOW_LIGAND_PH", "7.4").strip()
+    return {
+        "ligand_protonation_ph": None if ph_value.lower() in {"", "none", "off"} else float(ph_value),
+        "ligand_minimize": os.environ.get("DOCKFLOW_LIGAND_MINIMIZE", "1").strip().lower() not in {"0", "false", "no", "off"},
+        "ligand_forcefield": os.environ.get("DOCKFLOW_LIGAND_FORCEFIELD", "MMFF94"),
+        "ligand_minimization_steps": int(os.environ.get("DOCKFLOW_LIGAND_STEPS", "250")),
+    }
+
+
+def prepare_ligand(
+    source: Path,
+    ligand_name: str,
+    pdb_dir: Path,
+    pdbqt_dir: Path,
+    tools: dict,
+    log_dir: Path,
+    settings: dict | None = None,
+) -> Path:
+    settings = settings or _env_settings()
     output_pdbqt = pdbqt_dir / f"{ligand_name}.pdbqt"
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
     if source.suffix.lower() == ".pdbqt":
         shutil.copyfile(source, output_pdbqt)
         return output_pdbqt
     output_pdb = pdb_dir / f"{ligand_name}.pdb"
-    convert_ligand_to_pdb(source, output_pdb, tools, log_dir / f"{ligand_name}_obabel.log")
+    convert_ligand_to_pdb(
+        source,
+        output_pdb,
+        tools,
+        log_dir / f"{ligand_name}_obabel.log",
+        protonation_ph=settings.get("ligand_protonation_ph", 7.4),
+        minimize=bool(settings.get("ligand_minimize", True)),
+        forcefield=str(settings.get("ligand_forcefield", "MMFF94")),
+        minimization_steps=int(settings.get("ligand_minimization_steps", 250)),
+    )
     pythonsh = require_tool(tools.get("mgltools_pythonsh"), ("pythonsh",), "MGLTools pythonsh")
     script = require_tool(tools.get("prepare_ligand4"), (), "prepare_ligand4.py")
     prepare_log = log_dir / f"{ligand_name}_prepare.log"
