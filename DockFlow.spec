@@ -12,7 +12,6 @@ common = dict(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
     noarchive=False,
     optimize=0,
 )
@@ -20,6 +19,7 @@ common = dict(
 gui_analysis = Analysis(
     ["src/dockflow/gui_launcher.py"],
     hiddenimports=all_dockflow,
+    excludes=[],
     **common,
 )
 gui_pyz = PYZ(gui_analysis.pure)
