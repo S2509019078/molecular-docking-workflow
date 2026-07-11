@@ -123,7 +123,6 @@ def _env_settings() -> dict:
         "ligand_minimize": os.environ.get("DOCKFLOW_LIGAND_MINIMIZE", "1").strip().lower() not in {"0", "false", "no", "off"},
         "ligand_forcefield": os.environ.get("DOCKFLOW_LIGAND_FORCEFIELD", "MMFF94"),
         "ligand_minimization_steps": int(os.environ.get("DOCKFLOW_LIGAND_STEPS", "250")),
-        "preparation_backend": os.environ.get("DOCKFLOW_PREPARATION_BACKEND", "auto"),
     }
 
 
