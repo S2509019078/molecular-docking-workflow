@@ -5,8 +5,8 @@ from pathlib import Path
 import json
 import os
 
-SCHEMA_VERSION = 1
-WORKFLOW_VERSION = "1.1.0"
+SCHEMA_VERSION = 2
+WORKFLOW_VERSION = "1.3.0"
 
 
 def file_sha256(path: Path) -> str:
