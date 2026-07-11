@@ -2,13 +2,13 @@
 
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = collect_submodules("dockflow") + collect_submodules("PySide6")
+all_dockflow = collect_submodules("dockflow")
+cli_hiddenimports = [name for name in all_dockflow if name not in {"dockflow.gui", "dockflow.gui_launcher"}]
 
 common = dict(
     pathex=["src"],
     binaries=[],
     datas=[],
-    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -17,7 +17,11 @@ common = dict(
     optimize=0,
 )
 
-gui_analysis = Analysis(["src/dockflow/gui_launcher.py"], **common)
+gui_analysis = Analysis(
+    ["src/dockflow/gui_launcher.py"],
+    hiddenimports=all_dockflow,
+    **common,
+)
 gui_pyz = PYZ(gui_analysis.pure)
 gui_exe = EXE(
     gui_pyz,
@@ -40,7 +44,12 @@ gui_exe = EXE(
     entitlements_file=None,
 )
 
-cli_analysis = Analysis(["src/dockflow/windows_launcher.py"], **common)
+cli_analysis = Analysis(
+    ["src/dockflow/windows_launcher.py"],
+    hiddenimports=cli_hiddenimports,
+    excludes=["PySide6"],
+    **common,
+)
 cli_pyz = PYZ(cli_analysis.pure)
 cli_exe = EXE(
     cli_pyz,
