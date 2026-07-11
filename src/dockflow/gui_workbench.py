@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QProcess, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,9 +17,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .desktop import load_summary
+from .desktop import cli_program_and_prefix, load_summary
 from .gui import APP_STYLE
 from .gui_advanced import DockFlowAdvancedWindow
+from .pose_analysis import index_project_poses, project_pose_records
 from .result_workbench import ResultFilter, build_3dmol_preview, export_results_csv, filter_results
 
 
@@ -27,9 +28,14 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
     def __init__(self, runs_dir: Path):
         self.all_result_rows: list[dict[str, str]] = []
         self.filtered_result_rows: list[dict[str, str]] = []
+        self.current_pose_records = []
         super().__init__(runs_dir)
-        self.setWindowTitle("DockFlow — Molecular Docking Studio 0.6")
+        self.setWindowTitle("DockFlow — Molecular Docking Studio 1.2")
+        self.pose_process = QProcess(self)
+        self.pose_process.setProcessChannelMode(QProcess.MergedChannels)
+        self.pose_process.finished.connect(self._pose_process_finished)
         self._install_result_toolbar()
+        self.result_table.itemSelectionChanged.connect(self._refresh_pose_selector)
 
     def _install_result_toolbar(self):
         page = self.pages.widget(2)
@@ -52,8 +58,13 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
         self.max_affinity.setValue(-7.0)
         self.max_affinity.setSuffix(" kcal/mol")
         self.max_affinity.valueChanged.connect(self._apply_result_filters)
-        preview = QPushButton("3D预览")
+        self.pose_selector = QComboBox()
+        self.pose_selector.setMinimumWidth(150)
+        self.pose_selector.setToolTip("选择 Vina 输出的具体构象 mode")
+        preview = QPushButton("预览选中构象")
         preview.clicked.connect(self._preview_selected_result)
+        plip_pose = QPushButton("PLIP分析该构象")
+        plip_pose.clicked.connect(self._run_plip_selected_pose)
         export = QPushButton("导出筛选结果")
         export.clicked.connect(self._export_filtered_results)
         row.addWidget(QLabel("筛选"))
@@ -61,15 +72,23 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
         row.addWidget(self.result_classification)
         row.addWidget(self.affinity_filter_enabled)
         row.addWidget(self.max_affinity)
+        row.addWidget(QLabel("构象"))
+        row.addWidget(self.pose_selector)
         row.addWidget(preview)
+        row.addWidget(plip_pose)
         row.addWidget(export)
         layout.insertWidget(3, toolbar)
         self.result_table.setSortingEnabled(True)
+        self.result_table.setSelectionBehavior(self.result_table.SelectRows)
 
     def _refresh_results(self):
         self.all_result_rows = []
         if self.current_config:
             self.all_result_rows = load_summary(self.current_config.parent.parent / "results" / "docking_summary.tsv")
+            try:
+                index_project_poses(self.current_config)
+            except Exception as error:
+                self.statusBar().showMessage(f"构象索引未更新：{error}", 8000)
         self._apply_result_filters()
 
     def _apply_result_filters(self):
@@ -86,6 +105,7 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
         self.filtered_result_rows = filter_results(self.all_result_rows, criteria)
         self.result_table.setSortingEnabled(False)
         self.result_table.setRowCount(0)
+        from PySide6.QtWidgets import QTableWidgetItem
         for row_data in self.filtered_result_rows:
             row = self.result_table.rowCount()
             self.result_table.insertRow(row)
@@ -97,7 +117,6 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
                 row_data.get("classification", ""),
                 row_data.get("evidence", ""),
             ]
-            from PySide6.QtWidgets import QTableWidgetItem
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if column in {2, 3}:
@@ -107,6 +126,10 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
                         pass
                 self.result_table.setItem(row, column, item)
         self.result_table.setSortingEnabled(True)
+        if self.result_table.rowCount():
+            self.result_table.selectRow(0)
+        else:
+            self.pose_selector.clear()
         self.statusBar().showMessage(f"显示 {len(self.filtered_result_rows)} / {len(self.all_result_rows)} 条结果", 5000)
 
     def _selected_identifiers(self) -> tuple[str, str] | None:
@@ -120,6 +143,42 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
             return None
         return target.text(), ligand.text()
 
+    def _refresh_pose_selector(self):
+        self.pose_selector.clear()
+        self.current_pose_records = []
+        if not self.current_config:
+            return
+        identifiers = self._selected_identifiers_silent()
+        if not identifiers:
+            return
+        try:
+            records = project_pose_records(self.current_config, *identifiers)
+        except Exception as error:
+            self.statusBar().showMessage(f"读取构象失败：{error}", 8000)
+            return
+        self.current_pose_records = sorted(records, key=lambda record: record.rank)
+        for record in self.current_pose_records:
+            affinity = "—" if record.affinity is None else f"{record.affinity:.3f} kcal/mol"
+            self.pose_selector.addItem(f"Mode {record.rank} · {affinity}", record.rank)
+
+    def _selected_identifiers_silent(self) -> tuple[str, str] | None:
+        row = self.result_table.currentRow()
+        if row < 0:
+            return None
+        target = self.result_table.item(row, 0)
+        ligand = self.result_table.item(row, 1)
+        if not target or not ligand:
+            return None
+        return target.text(), ligand.text()
+
+    def _selected_pose_record(self):
+        if not self.current_pose_records:
+            return None
+        index = self.pose_selector.currentIndex()
+        if index < 0 or index >= len(self.current_pose_records):
+            index = 0
+        return self.current_pose_records[index]
+
     def _preview_selected_result(self):
         if not self.current_config:
             QMessageBox.warning(self, "未选择项目", "请先创建或打开项目。")
@@ -127,11 +186,53 @@ class DockFlowWorkbenchWindow(DockFlowAdvancedWindow):
         identifiers = self._selected_identifiers()
         if not identifiers:
             return
+        record = self._selected_pose_record()
         try:
-            preview = build_3dmol_preview(self.current_config, *identifiers)
+            preview = build_3dmol_preview(
+                self.current_config,
+                *identifiers,
+                pose_path=record.path if record else None,
+                pose_rank=record.rank if record else None,
+                affinity=record.affinity if record else None,
+            )
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(preview)))
         except Exception as error:
             QMessageBox.critical(self, "3D预览生成失败", str(error))
+
+    def _run_plip_selected_pose(self):
+        if not self.current_config:
+            QMessageBox.warning(self, "未选择项目", "请先创建或打开项目。")
+            return
+        identifiers = self._selected_identifiers()
+        record = self._selected_pose_record()
+        if not identifiers or record is None:
+            QMessageBox.warning(self, "没有构象", "当前结果没有可选择的 Vina 构象。请先刷新结果。")
+            return
+        if self.pose_process.state() != QProcess.NotRunning:
+            QMessageBox.information(self, "PLIP正在运行", "请等待当前构象分析完成。")
+            return
+        program, prefix = cli_program_and_prefix()
+        args = prefix + [
+            "plip-pose",
+            "--config", str(self.current_config),
+            "--target", identifiers[0],
+            "--ligand", identifiers[1],
+            "--pose-rank", str(record.rank),
+        ]
+        self.pose_process.setProgram(program)
+        self.pose_process.setArguments(args)
+        self.pose_process.setWorkingDirectory(str(self.current_config.parent.parent))
+        self.pose_process.start()
+        self.statusBar().showMessage(f"正在分析 {identifiers[0]}/{identifiers[1]} Mode {record.rank}…")
+
+    def _pose_process_finished(self, exit_code, _status):
+        output = bytes(self.pose_process.readAll()).decode("utf-8", errors="replace").strip()
+        if exit_code == 0:
+            QMessageBox.information(self, "PLIP分析完成", output or "所选构象分析完成。")
+            self.statusBar().showMessage("PLIP构象分析完成", 8000)
+        else:
+            QMessageBox.critical(self, "PLIP分析失败", output or f"退出码：{exit_code}")
+            self.statusBar().showMessage(f"PLIP分析失败，退出码 {exit_code}", 8000)
 
     def _export_filtered_results(self):
         if not self.filtered_result_rows:
