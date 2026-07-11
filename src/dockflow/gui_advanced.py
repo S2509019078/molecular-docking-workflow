@@ -106,7 +106,7 @@ class DockFlowAdvancedWindow(DockFlowWindowV2):
 
     def _edit_ligand_prep(self):
         dialog = LigandPreparationDialog(self, self.ligand_prep)
-        if dialog.exec() == dialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.ligand_prep = dialog.values()
             self._save_ligand_prep()
             QMessageBox.information(
