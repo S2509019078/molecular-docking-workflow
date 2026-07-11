@@ -111,9 +111,15 @@ class DockingWorkflow:
     def prepare_ligands(self, force: bool = False) -> dict[str, Path]:
         sources = discover_ligands(self.config.ligand_dir)
         result = {}
+        ligand_settings = {
+            "ligand_protonation_ph": self._setting("ligand_protonation_ph", 7.4),
+            "ligand_minimize": self._setting("ligand_minimize", True),
+            "ligand_forcefield": self._setting("ligand_forcefield", "MMFF94"),
+            "ligand_minimization_steps": self._setting("ligand_minimization_steps", 250),
+        }
         for name, source in sources.items():
             output = self.config.work_dir / "ligands_pdbqt" / f"{name}.pdbqt"
-            payload = build_payload(inputs={"ligand_source": source}, parameters={"source_suffix": source.suffix.lower()}, tools={"pythonsh": str(self.config.tools.get("mgltools_pythonsh", "")), "prepare_ligand4": str(self.config.tools.get("prepare_ligand4", "")), "obabel": str(self.config.tools.get("obabel", ""))})
+            payload = build_payload(inputs={"ligand_source": source}, parameters={"source_suffix": source.suffix.lower(), **ligand_settings}, tools={"pythonsh": str(self.config.tools.get("mgltools_pythonsh", "")), "prepare_ligand4": str(self.config.tools.get("prepare_ligand4", "")), "obabel": str(self.config.tools.get("obabel", ""))})
             manifest = self._manifest("ligands", name)
             key = f"ligand:{name}"
             if not force and manifest_valid(manifest, payload, [output]):
@@ -121,7 +127,7 @@ class DockingWorkflow:
                 continue
             self.state.begin(key)
             try:
-                prepare_ligand(source, name, self.config.work_dir / "ligands_pdb", self.config.work_dir / "ligands_pdbqt", self.config.tools, self.config.work_dir / "logs" / "ligands")
+                prepare_ligand(source, name, self.config.work_dir / "ligands_pdb", self.config.work_dir / "ligands_pdbqt", self.config.tools, self.config.work_dir / "logs" / "ligands", settings=ligand_settings)
                 write_manifest(manifest, payload, [output])
                 self.state.finish(key, [output])
                 result[name] = output
