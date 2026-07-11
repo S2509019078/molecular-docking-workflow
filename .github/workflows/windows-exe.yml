@@ -40,10 +40,14 @@ jobs:
       - name: Smoke test Meeko helpers
         shell: pwsh
         run: |
-          .\dist\DockFlow-Meeko-Ligand.exe --help | Out-Null
+          $ligand = .\dist\DockFlow-Meeko-Ligand.exe --smoke-test 2>&1
+          $ligand | Write-Host
           if ($LASTEXITCODE -ne 0) { throw "Meeko ligand helper returned $LASTEXITCODE" }
-          .\dist\DockFlow-Meeko-Receptor.exe --help | Out-Null
+          if ($ligand -notmatch "DockFlow Meeko ligand helper OK") { throw "Meeko ligand helper self-test failed" }
+          $receptor = .\dist\DockFlow-Meeko-Receptor.exe --smoke-test 2>&1
+          $receptor | Write-Host
           if ($LASTEXITCODE -ne 0) { throw "Meeko receptor helper returned $LASTEXITCODE" }
+          if ($receptor -notmatch "DockFlow Meeko receptor helper OK") { throw "Meeko receptor helper self-test failed" }
       - name: Smoke test desktop GUI
         shell: pwsh
         run: |
