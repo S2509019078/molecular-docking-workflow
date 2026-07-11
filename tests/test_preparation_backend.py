@@ -9,32 +9,41 @@ class Result:
     returncode = 0
 
 
-def test_auto_backend_falls_back_to_openbabel(tmp_path):
+def _tools(tmp_path):
     obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
-    tools = {
+    receptor = tmp_path / "DockFlow-Meeko-Receptor.exe"
+    ligand = tmp_path / "DockFlow-Meeko-Ligand.exe"
+    for path in (obabel, receptor, ligand):
+        path.write_bytes(b"x")
+    return {
         "obabel": str(obabel),
-        "mgltools_pythonsh": "missing-pythonsh.exe",
-        "prepare_receptor4": "missing-prepare-receptor.py",
-        "prepare_ligand4": "missing-prepare-ligand.py",
+        "meeko_receptor": str(receptor),
+        "meeko_ligand": str(ligand),
     }
-    assert preparation.resolve_preparation_backend(tools, "auto") == "openbabel"
-    assert "自动使用 Open Babel" in preparation.preparation_backend_warning(tools, "auto")
+
+
+def test_auto_backend_prefers_meeko(tmp_path):
+    tools = _tools(tmp_path)
+    assert preparation.resolve_preparation_backend(tools, "auto") == "meeko"
+    assert preparation.preparation_backend_warning(tools, "auto") is None
+
+
+def test_openbabel_direct_pdbqt_backend_is_rejected(tmp_path):
+    tools = _tools(tmp_path)
+    with pytest.raises(ValueError, match="no longer supported"):
+        preparation.resolve_preparation_backend(tools, "openbabel")
 
 
 def test_explicit_mgltools_backend_requires_complete_toolchain(tmp_path):
-    obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
     with pytest.raises(FileNotFoundError):
-        preparation.resolve_preparation_backend({"obabel": str(obabel)}, "mgltools")
+        preparation.resolve_preparation_backend({}, "mgltools")
 
 
-def test_openbabel_receptor_preparation_command(monkeypatch, tmp_path):
+def test_meeko_receptor_preparation_command(monkeypatch, tmp_path):
     clean = tmp_path / "receptor.pdb"
     clean.write_text("ATOM\n", encoding="utf-8")
     output = tmp_path / "receptor.pdbqt"
-    obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
+    tools = _tools(tmp_path)
     captured = {}
 
     def fake_run(command, _log):
@@ -46,27 +55,28 @@ def test_openbabel_receptor_preparation_command(monkeypatch, tmp_path):
     preparation.prepare_receptor(
         clean,
         output,
-        {"obabel": str(obabel)},
+        tools,
         tmp_path / "receptor.log",
-        settings={"preparation_backend": "openbabel", "receptor_protonation_ph": 7.4},
+        settings={"preparation_backend": "meeko"},
     )
     command = captured["command"]
-    assert command[0] == str(obabel)
-    assert "-xr" in command
-    assert "-xh" in command
-    assert command[command.index("-p") + 1] == "7.4"
+    assert command[0].endswith("DockFlow-Meeko-Receptor.exe")
+    assert command[1:3] == ["--read_pdb", str(clean)]
+    assert command[-2:] == ["-p", str(output)]
 
 
-def test_openbabel_ligand_pdbqt_fallback(monkeypatch, tmp_path):
-    source = tmp_path / "ligand.sdf"
-    source.write_text("ligand\n", encoding="utf-8")
-    obabel = tmp_path / "obabel.exe"
-    obabel.write_bytes(b"x")
+def test_meeko_ligand_preparation_uses_sdf(monkeypatch, tmp_path):
+    source = tmp_path / "ligand.mol2"
+    source.write_text("@<TRIPOS>MOLECULE\n", encoding="utf-8")
+    tools = _tools(tmp_path)
     commands = []
 
     def fake_run(command, _log):
         commands.append(command)
-        output = Path(command[command.index("-O") + 1])
+        if "-O" in command:
+            output = Path(command[command.index("-O") + 1])
+        else:
+            output = Path(command[command.index("-o") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text("ATOM\n", encoding="utf-8")
         return Result()
@@ -77,10 +87,10 @@ def test_openbabel_ligand_pdbqt_fallback(monkeypatch, tmp_path):
         "ligand",
         tmp_path / "pdb",
         tmp_path / "pdbqt",
-        {"obabel": str(obabel)},
+        tools,
         tmp_path / "logs",
         settings={
-            "preparation_backend": "openbabel",
+            "preparation_backend": "meeko",
             "ligand_protonation_ph": 7.4,
             "ligand_minimize": False,
             "ligand_forcefield": "MMFF94",
@@ -88,5 +98,8 @@ def test_openbabel_ligand_pdbqt_fallback(monkeypatch, tmp_path):
         },
     )
     assert output.exists()
-    assert commands[-1][commands[-1].index("-O") + 1].endswith("ligand.pdbqt")
-    assert "-xh" in commands[-1]
+    meeko_command = commands[-1]
+    assert meeko_command[0].endswith("DockFlow-Meeko-Ligand.exe")
+    assert meeko_command[1] == "-i"
+    assert meeko_command[2].endswith("ligand.sdf")
+    assert meeko_command[-2:] == ["-o", str(output)]
