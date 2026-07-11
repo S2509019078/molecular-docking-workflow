@@ -2,21 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QProcess
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QProcess, QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .gui import APP_STYLE
 from .gui_workbench import DockFlowWorkbenchWindow
 from .professional_viewers import build_chimerax_launch, build_pymol_launch, discover_viewer
+from .reporting import build_project_report
 
 
 class DockFlowViewerWindow(DockFlowWorkbenchWindow):
     def __init__(self, runs_dir: Path):
         self.viewer_processes: list[QProcess] = []
         super().__init__(runs_dir)
-        self.setWindowTitle("DockFlow — Molecular Docking Studio 0.7")
+        self.setWindowTitle("DockFlow — Molecular Docking Studio 0.8")
         self._build_viewer_menu()
+        self._build_report_menu()
 
     def _build_viewer_menu(self):
         viewer_menu = self.menuBar().addMenu("专业查看器")
@@ -31,6 +33,43 @@ class DockFlowViewerWindow(DockFlowWorkbenchWindow):
         viewer_menu.addActions([pymol_action, chimerax_action])
         viewer_menu.addSeparator()
         viewer_menu.addActions([configure_pymol, configure_chimerax])
+
+    def _build_report_menu(self):
+        report_menu = self.menuBar().addMenu("报告")
+        generate_action = QAction("生成项目报告", self)
+        generate_action.triggered.connect(self._generate_project_report)
+        open_action = QAction("打开最近报告", self)
+        open_action.triggered.connect(self._open_existing_report)
+        report_menu.addActions([generate_action, open_action])
+
+    def _generate_project_report(self):
+        if not self.current_config:
+            QMessageBox.warning(self, "未选择项目", "请先创建或打开项目。")
+            return
+        try:
+            report = build_project_report(self.current_config)
+            self.statusBar().showMessage(f"报告已生成: {report}", 10000)
+            answer = QMessageBox.question(
+                self,
+                "项目报告已生成",
+                f"报告位置：\n{report}\n\n现在打开吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer == QMessageBox.Yes:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+        except Exception as error:
+            QMessageBox.critical(self, "报告生成失败", str(error))
+
+    def _open_existing_report(self):
+        if not self.current_config:
+            QMessageBox.warning(self, "未选择项目", "请先创建或打开项目。")
+            return
+        report = self.current_config.parent.parent / "results" / "report" / "index.html"
+        if not report.exists():
+            QMessageBox.information(self, "尚无报告", "当前项目还没有生成报告。")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
 
     def _choose_viewer_path(self, viewer: str):
         label = "PyMOL" if viewer == "pymol" else "ChimeraX"
@@ -102,7 +141,7 @@ def run_gui(runs_dir: Path, smoke_test: bool = False) -> int:
         window.show()
         app.processEvents()
         window.close()
-        print("DockFlow GUI professional viewers OK")
+        print("DockFlow GUI reporting OK")
         return 0
     window.show()
     return app.exec()
