@@ -3,9 +3,10 @@ import re
 import shutil
 
 from .commands import discover_tool, require_tool, run_command
+from .portable import meeko_available, prepare_ligand_with_meeko, prepare_receptor_with_meeko
 
 SUPPORTED_LIGAND_EXTENSIONS = {".sdf", ".mol2", ".mol", ".pdb", ".pdbqt", ".smi", ".smiles"}
-SUPPORTED_PREPARATION_BACKENDS = {"auto", "mgltools", "autodocktools"}
+SUPPORTED_PREPARATION_BACKENDS = {"auto", "portable", "meeko", "mgltools", "autodocktools"}
 
 
 def safe_name(value: str) -> str:
@@ -38,25 +39,40 @@ def _mgltools_paths(tools: dict) -> tuple[Path | None, Path | None, Path | None]
 
 def resolve_preparation_backend(tools: dict, requested: str | None = None) -> str:
     backend = (requested or "auto").strip().lower()
+    if backend == "portable":
+        backend = "meeko"
     if backend == "autodocktools":
         backend = "mgltools"
-    if backend in {"openbabel", "meeko"}:
-        raise ValueError(
-            "PDBQT generation is restricted to AutoDockTools/MGLTools. "
-            "Open Babel is used only for file-format conversion."
-        )
-    if backend not in {"auto", "mgltools"}:
+    if backend == "openbabel":
+        raise ValueError("Open Babel is a format converter and cannot be used as the PDBQT preparation backend")
+    if backend not in {"auto", "meeko", "mgltools"}:
         raise ValueError(f"unsupported preparation backend: {backend}")
+
+    if backend == "auto":
+        if meeko_available():
+            return "meeko"
+        if all(_mgltools_paths(tools)):
+            return "mgltools"
+        raise FileNotFoundError(
+            "No PDBQT preparation backend is available. Use the DockFlow Portable build or configure AutoDockTools."
+        )
+    if backend == "meeko":
+        if not meeko_available():
+            raise FileNotFoundError("Portable Meeko/RDKit backend is not included in this build")
+        return "meeko"
     if not all(_mgltools_paths(tools)):
         raise FileNotFoundError(
-            "AutoDockTools backend is incomplete: configure pythonsh, prepare_receptor4.py, and prepare_ligand4.py"
+            "AutoDockTools compatibility backend is incomplete: configure its Python interpreter, "
+            "prepare_receptor4.py, and prepare_ligand4.py"
         )
     return "mgltools"
 
 
 def preparation_backend_warning(tools: dict, requested: str | None = None) -> str | None:
-    resolve_preparation_backend(tools, requested)
-    return None
+    backend = resolve_preparation_backend(tools, requested)
+    if backend == "meeko":
+        return "Portable Meeko/RDKit backend selected"
+    return "AutoDockTools compatibility backend selected"
 
 
 def _check_output(output: Path, result, label: str, log_path: Path) -> Path:
@@ -73,8 +89,11 @@ def prepare_receptor(
     settings: dict | None = None,
 ) -> Path:
     settings = settings or {}
-    resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
+    backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
+    if backend == "meeko":
+        return prepare_receptor_with_meeko(clean_pdb, output_pdbqt, log_path)
+
     pythonsh, script, _ = _mgltools_paths(tools)
     command = [
         str(pythonsh),
@@ -150,7 +169,10 @@ def prepare_ligand(
         shutil.copyfile(source, output_pdbqt)
         return output_pdbqt
 
-    resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
+    backend = resolve_preparation_backend(tools, str(settings.get("preparation_backend", "auto")))
+    if backend == "meeko":
+        return prepare_ligand_with_meeko(source, output_pdbqt, log_dir / f"{ligand_name}_prepare.log")
+
     prepared_input = ligand_input_for_autodocktools(
         source,
         ligand_name,
