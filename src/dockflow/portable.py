@@ -6,9 +6,11 @@ from pathlib import Path
 import os
 import sys
 
+from .commands import discover_tool
+
 
 def meeko_available() -> bool:
-    """Return whether the in-process Meeko preparation backend is available."""
+    """Return whether the in-process Meeko/RDKit preparation backend is available."""
     return find_spec("meeko") is not None and find_spec("rdkit") is not None
 
 
@@ -43,6 +45,21 @@ def bundled_vina_path() -> Path | None:
             if candidate.is_file():
                 return candidate.resolve()
     return None
+
+
+def resolve_vina_executable(configured: str | Path | None = None) -> Path | None:
+    external = discover_tool(str(configured or "").strip() or None, ("vina.exe", "vina"))
+    return external or bundled_vina_path()
+
+
+def portable_runtime_status() -> dict[str, object]:
+    vina = bundled_vina_path()
+    return {
+        "meeko": meeko_available(),
+        "vina": vina is not None,
+        "vina_path": str(vina or ""),
+        "ready": meeko_available() and vina is not None,
+    }
 
 
 def _run_python_cli(main_function, argv: list[str], log_path: Path) -> None:
@@ -81,6 +98,9 @@ def prepare_receptor_with_meeko(clean_pdb: Path, output_pdbqt: Path, log_path: P
         str(output_pdbqt.with_suffix("")),
         "--write_pdbqt",
         str(output_pdbqt),
+        "--compute_charges",
+        "--charge_model",
+        "gasteiger",
     ]
     _run_python_cli(meeko_receptor_main, argv, log_path)
     if not output_pdbqt.is_file() or output_pdbqt.stat().st_size == 0:
@@ -104,10 +124,12 @@ def prepare_ligand_with_meeko(source: Path, output_pdbqt: Path, log_path: Path) 
     output_pdbqt.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         "mk_prepare_ligand.py",
-        "--input_molecule_file",
+        "-i",
         str(source),
-        "--output_pdbqt_filename",
+        "-o",
         str(output_pdbqt),
+        "--charge_model",
+        "gasteiger",
     ]
     _run_python_cli(meeko_ligand_main, argv, log_path)
     if not output_pdbqt.is_file() or output_pdbqt.stat().st_size == 0:
